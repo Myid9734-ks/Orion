@@ -1,0 +1,64 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="OKXTradingBot.UI.App"
+             RequestedThemeVariant="Dark">
+    <Application.Styles>
+        <FluentTheme />
+    </Application.Styles>
+
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+
+                <!-- ── 라이트 모드 ── -->
+                <ResourceDictionary x:Key="Default">
+                    <SolidColorBrush x:Key="AppBackground"    Color="#EEF0F8"/>
+                    <SolidColorBrush x:Key="HeaderBackground" Color="#E0E4F2"/>
+                    <SolidColorBrush x:Key="CardBackground"   Color="#FFFFFF"/>
+                    <SolidColorBrush x:Key="CardBorder"       Color="#CED2E8"/>
+                    <SolidColorBrush x:Key="SeparatorColor"   Color="#D8DCF0"/>
+                    <SolidColorBrush x:Key="TextPrimary"      Color="#1C1C3A"/>
+                    <SolidColorBrush x:Key="TextSecondary"    Color="#4C5080"/>
+                    <SolidColorBrush x:Key="TextMuted"        Color="#8890B0"/>
+                    <SolidColorBrush x:Key="AccentColor"      Color="#5C35CC"/>
+                    <SolidColorBrush x:Key="PriceColor"       Color="#00796B"/>
+                    <SolidColorBrush x:Key="LogText"          Color="#2C2C50"/>
+                    <SolidColorBrush x:Key="TriggerColor"     Color="#BF4000"/>
+                    <SolidColorBrush x:Key="StatusTextColor"  Color="#505070"/>
+                    <SolidColorBrush x:Key="SymbolColor"      Color="#5C35CC"/>
+                    <SolidColorBrush x:Key="StartBg"          Color="#2E7D32"/>
+                    <SolidColorBrush x:Key="StartFg"          Color="#FFFFFF"/>
+                    <SolidColorBrush x:Key="StopBg"           Color="#C62828"/>
+                    <SolidColorBrush x:Key="StopFg"           Color="#FFFFFF"/>
+                    <SolidColorBrush x:Key="SaveBg"           Color="#6A1B9A"/>
+                    <SolidColorBrush x:Key="SaveFg"           Color="#FFFFFF"/>
+                </ResourceDictionary>
+
+                <!-- ── 다크 모드 ── -->
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="AppBackground"    Color="#12121C"/>
+                    <SolidColorBrush x:Key="HeaderBackground" Color="#0D0D18"/>
+                    <SolidColorBrush x:Key="CardBackground"   Color="#1A1A2A"/>
+                    <SolidColorBrush x:Key="CardBorder"       Color="#2A2A3C"/>
+                    <SolidColorBrush x:Key="SeparatorColor"   Color="#2A2A3C"/>
+                    <SolidColorBrush x:Key="TextPrimary"      Color="#C0C0E0"/>
+                    <SolidColorBrush x:Key="TextSecondary"    Color="#8080B0"/>
+                    <SolidColorBrush x:Key="TextMuted"        Color="#505080"/>
+                    <SolidColorBrush x:Key="AccentColor"      Color="#7C4DFF"/>
+                    <SolidColorBrush x:Key="PriceColor"       Color="#00BFA5"/>
+                    <SolidColorBrush x:Key="LogText"          Color="#B0B0CC"/>
+                    <SolidColorBrush x:Key="TriggerColor"     Color="#FFC107"/>
+                    <SolidColorBrush x:Key="StatusTextColor"  Color="#A0A0C0"/>
+                    <SolidColorBrush x:Key="SymbolColor"      Color="#7C4DFF"/>
+                    <SolidColorBrush x:Key="StartBg"          Color="#1B5E20"/>
+                    <SolidColorBrush x:Key="StartFg"          Color="#A5D6A7"/>
+                    <SolidColorBrush x:Key="StopBg"           Color="#B71C1C"/>
+                    <SolidColorBrush x:Key="StopFg"           Color="#EF9A9A"/>
+                    <SolidColorBrush x:Key="SaveBg"           Color="#4A148C"/>
+                    <SolidColorBrush x:Key="SaveFg"           Color="#CE93D8"/>
+                </ResourceDictionary>
+
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

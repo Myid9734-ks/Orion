@@ -1,0 +1,100 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="OKXTradingBot.UI.Views.StepParamsDialog"
+        Title="단계별 파라미터 설정"
+        Width="420" MinHeight="200"
+        MaxHeight="600"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource AppBackground}">
+
+  <Grid RowDefinitions="Auto,*,Auto" Margin="16">
+
+    <!-- 안내 문구 -->
+    <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,12">
+      <TextBlock Text="마틴 단계별 진입 간격 / 목표 수익 설정"
+                 FontSize="13" FontWeight="Bold"
+                 Foreground="{DynamicResource TextPrimary}"/>
+      <TextBlock Text="목록보다 단계가 많으면 마지막 값이 반복 적용됩니다."
+                 FontSize="11"
+                 Foreground="{DynamicResource TextSecondary}"/>
+    </StackPanel>
+
+    <!-- 헤더 + 행 목록 -->
+    <Border Grid.Row="1"
+            Background="{DynamicResource CardBackground}"
+            BorderBrush="{DynamicResource CardBorder}"
+            BorderThickness="1" CornerRadius="6"
+            Padding="10,8">
+      <StackPanel>
+        <!-- 컬럼 헤더 -->
+        <Grid ColumnDefinitions="44,*" Margin="0,0,0,6">
+          <TextBlock Text="회차"
+                     FontSize="11" FontWeight="Bold"
+                     Foreground="{DynamicResource TextSecondary}"
+                     HorizontalAlignment="Center"/>
+          <TextBlock Grid.Column="1" Text="진입 간격 (%)"
+                     FontSize="11" FontWeight="Bold"
+                     Foreground="{DynamicResource TextSecondary}"
+                     HorizontalAlignment="Center"/>
+        </Grid>
+
+        <!-- 데이터 행 -->
+        <ScrollViewer MaxHeight="380" VerticalScrollBarVisibility="Auto">
+          <ItemsControl ItemsSource="{Binding Rows}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Grid ColumnDefinitions="44,*" Margin="0,3">
+                  <Border Background="{DynamicResource AppBackground}"
+                          CornerRadius="4"
+                          HorizontalAlignment="Center"
+                          VerticalAlignment="Center"
+                          Padding="6,2">
+                    <TextBlock Text="{Binding Step}"
+                               FontSize="12" FontWeight="Bold"
+                               Foreground="{DynamicResource AccentColor}"
+                               HorizontalAlignment="Center"/>
+                  </Border>
+                  <NumericUpDown Grid.Column="1"
+                                 Value="{Binding Gap}"
+                                 Minimum="0.1" Maximum="20" Increment="0.1"
+                                 FormatString="F2"
+                                 FontSize="12" FontWeight="Bold"
+                                 Margin="3,0"/>
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </StackPanel>
+    </Border>
+
+    <!-- 하단 버튼 -->
+    <Grid Grid.Row="2" ColumnDefinitions="*,8,Auto,8,Auto" Margin="0,12,0,0">
+      <Button Grid.Column="0"
+              Content="균등값으로 초기화"
+              Click="OnReset"
+              HorizontalAlignment="Stretch"
+              HorizontalContentAlignment="Center"
+              Padding="0,9" CornerRadius="6"
+              FontSize="12"
+              Background="{DynamicResource CardBorder}"
+              Foreground="{DynamicResource TextSecondary}"/>
+      <Button Grid.Column="2"
+              Content="취소"
+              Click="OnCancel"
+              Padding="20,9" CornerRadius="6"
+              FontSize="12"
+              Background="{DynamicResource CardBorder}"
+              Foreground="{DynamicResource TextSecondary}"/>
+      <Button Grid.Column="4"
+              Content="확인"
+              Click="OnConfirm"
+              Padding="20,9" CornerRadius="6"
+              FontSize="12" FontWeight="Bold"
+              Background="{DynamicResource AccentColor}"
+              Foreground="White"/>
+    </Grid>
+
+  </Grid>
+</Window>

@@ -1,0 +1,50 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="OKXTradingBot.UI.Views.UnsavedChangesDialog"
+        Title="미저장 변경사항"
+        Width="360" Height="170"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource AppBackground}">
+
+  <StackPanel Margin="24" Spacing="20">
+
+    <StackPanel Spacing="6">
+      <TextBlock Text="저장되지 않은 변경사항이 있습니다."
+                 FontSize="13" FontWeight="Bold"
+                 Foreground="{DynamicResource TextPrimary}"/>
+      <TextBlock Text="설정을 저장하거나 변경사항을 취소하세요."
+                 FontSize="12"
+                 Foreground="{DynamicResource TextSecondary}"/>
+    </StackPanel>
+
+    <Grid ColumnDefinitions="*,8,*,8,*">
+      <Button Grid.Column="0"
+              Content="저장"
+              Click="OnSave"
+              HorizontalAlignment="Stretch"
+              HorizontalContentAlignment="Center"
+              Padding="0,9" CornerRadius="6"
+              FontWeight="Bold" FontSize="12"
+              Background="#4CAF50" Foreground="White"/>
+      <Button Grid.Column="2"
+              Content="취소 (되돌리기)"
+              Click="OnDiscard"
+              HorizontalAlignment="Stretch"
+              HorizontalContentAlignment="Center"
+              Padding="0,9" CornerRadius="6"
+              FontSize="12"
+              Background="#E91E63" Foreground="White"/>
+      <Button Grid.Column="4"
+              Content="머물기"
+              Click="OnCancel"
+              HorizontalAlignment="Stretch"
+              HorizontalContentAlignment="Center"
+              Padding="0,9" CornerRadius="6"
+              FontSize="12"
+              Background="{DynamicResource CardBorder}"
+              Foreground="{DynamicResource TextSecondary}"/>
+    </Grid>
+
+  </StackPanel>
+</Window>

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\OKXTradingBot.Core\OKXTradingBot.Core.csproj" />
+    <ProjectReference Include="..\OKXTradingBot.Infrastructure\OKXTradingBot.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia"                Version="11.1.0" />
+    <PackageReference Include="Avalonia.Desktop"        Version="11.1.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent"  Version="11.1.0" />
+    <PackageReference Include="Avalonia.ReactiveUI"     Version="11.1.0" />
+  </ItemGroup>
+</Project>

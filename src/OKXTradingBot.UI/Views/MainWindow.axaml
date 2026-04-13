@@ -1,0 +1,522 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:OKXTradingBot.UI.ViewModels"
+        xmlns:local="using:OKXTradingBot.UI.Views"
+        x:Class="OKXTradingBot.UI.Views.MainWindow"
+        Title="OKX AutoTrading Bot"
+        Width="1060" Height="700"
+        MinWidth="900" MinHeight="600"
+        Background="{DynamicResource AppBackground}">
+
+  <Grid RowDefinitions="Auto,*">
+
+    <!-- ── 헤더 ── -->
+    <Border Grid.Row="0" Background="{DynamicResource HeaderBackground}" Padding="18,12">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
+          <TextBlock Text="{Binding HeaderSymbol}"
+                     FontSize="16" FontWeight="Bold"
+                     Foreground="{DynamicResource SymbolColor}"
+                     VerticalAlignment="Center"/>
+          <TextBlock Text="{Binding HeaderPrice}"
+                     FontSize="21" FontWeight="Bold"
+                     Foreground="{DynamicResource PriceColor}"
+                     VerticalAlignment="Center"/>
+        </StackPanel>
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <Ellipse Width="8" Height="8"
+                   Fill="{Binding SelectedSymbolTab.StatusBrush, FallbackValue=Gray}"/>
+          <TextBlock Text="{Binding SelectedSymbolTab.StatusText, FallbackValue=대기 중}"
+                     Foreground="{DynamicResource StatusTextColor}"
+                     FontSize="12" VerticalAlignment="Center"/>
+          <Button Content="{Binding TradingModeText}"
+                  Command="{Binding ToggleTradingModeCommand}"
+                  Background="{Binding TradingModeBrush}"
+                  Foreground="White"
+                  Padding="10,4" FontSize="12" CornerRadius="5"
+                  VerticalAlignment="Center"/>
+          <Button Content="{Binding ThemeButtonText}"
+                  Command="{Binding ToggleThemeCommand}"
+                  Padding="10,4" FontSize="12" CornerRadius="5"
+                  VerticalAlignment="Center"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- ── 탭 컨트롤 ── -->
+    <TabControl Grid.Row="1" Background="Transparent"
+                x:Name="MainTabControl"
+                SelectionChanged="OnTabSelectionChanged">
+
+      <!-- ══════════════ 트레이딩 탭 ══════════════ -->
+      <TabItem Header="   트레이딩   ">
+        <Grid RowDefinitions="Auto,*">
+
+          <!-- ── 심볼 탭 헤더 스트립 ── -->
+          <Border Grid.Row="0"
+                  Background="{DynamicResource HeaderBackground}"
+                  BorderBrush="{DynamicResource CardBorder}"
+                  BorderThickness="0,0,0,1" Padding="8,6">
+            <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+
+              <!-- 심볼 탭 버튼 목록 -->
+              <ItemsControl ItemsSource="{Binding SymbolTabs}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="4"/>
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="Auto,Auto">
+                      <!-- 탭 선택 버튼 -->
+                      <Button Grid.Column="0"
+                              Content="{Binding TabHeader}"
+                              Padding="12,5" FontSize="12" FontWeight="SemiBold"
+                              CornerRadius="6,0,0,6"
+                              Click="OnSymbolTabClick"
+                              Tag="{Binding}"/>
+                      <!-- × 닫기 버튼 -->
+                      <Button Grid.Column="1"
+                              Content="×"
+                              Padding="5,5" FontSize="11"
+                              CornerRadius="0,6,6,0"
+                              Click="OnSymbolTabClose"
+                              Tag="{Binding}"
+                              Foreground="{DynamicResource TextSecondary}"
+                              Background="Transparent"/>
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+
+              <!-- + 탭 추가 버튼 (브라우저 탭 스타일) -->
+              <Button Content="+"
+                      Command="{Binding AddSymbolTabCommand}"
+                      IsEnabled="{Binding CanAddTab}"
+                      ToolTip.Tip="{Binding AddTabTooltip}"
+                      Padding="8,5" FontSize="15" FontWeight="Light"
+                      CornerRadius="6"
+                      VerticalAlignment="Center"
+                      Background="Transparent"
+                      Foreground="{DynamicResource TextSecondary}"/>
+
+            </StackPanel>
+          </Border>
+
+          <!-- ── 선택된 심볼 탭 내용 ── -->
+          <ContentControl Grid.Row="1"
+                          Content="{Binding SelectedSymbolTab}">
+            <ContentControl.ContentTemplate>
+              <DataTemplate>
+                <local:SymbolTabView/>
+              </DataTemplate>
+            </ContentControl.ContentTemplate>
+          </ContentControl>
+
+        </Grid>
+      </TabItem>
+
+      <!-- ══════════════ 수익률 탭 ══════════════ -->
+      <TabItem Header="   수익률   ">
+        <Grid RowDefinitions="Auto,*" Margin="14">
+
+          <Grid Grid.Row="0" ColumnDefinitions="*,*,*,*" Margin="0,0,0,12">
+            <Border Grid.Column="0"
+                    Background="{DynamicResource CardBackground}"
+                    BorderBrush="{DynamicResource CardBorder}"
+                    BorderThickness="1" CornerRadius="8" Padding="16,12"
+                    Margin="0,0,8,0">
+              <StackPanel>
+                <TextBlock Text="총 실현 손익" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6"/>
+                <TextBlock Text="{Binding SelectedSymbolTab.TotalPnlText, FallbackValue=-}" FontSize="18" FontWeight="Bold"
+                           Foreground="{Binding SelectedSymbolTab.TotalPnlBrush}"/>
+              </StackPanel>
+            </Border>
+            <Border Grid.Column="1"
+                    Background="{DynamicResource CardBackground}"
+                    BorderBrush="{DynamicResource CardBorder}"
+                    BorderThickness="1" CornerRadius="8" Padding="16,12"
+                    Margin="0,0,8,0">
+              <StackPanel>
+                <TextBlock Text="총 거래 횟수" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6"/>
+                <TextBlock Text="{Binding SelectedSymbolTab.TradeCountText, FallbackValue=-}" FontSize="18" FontWeight="Bold"
+                           Foreground="{DynamicResource TextPrimary}"/>
+              </StackPanel>
+            </Border>
+            <Border Grid.Column="2"
+                    Background="{DynamicResource CardBackground}"
+                    BorderBrush="{DynamicResource CardBorder}"
+                    BorderThickness="1" CornerRadius="8" Padding="16,12"
+                    Margin="0,0,8,0">
+              <StackPanel>
+                <TextBlock Text="승률" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6"/>
+                <TextBlock Text="{Binding SelectedSymbolTab.WinRateText, FallbackValue=-}" FontSize="18" FontWeight="Bold"
+                           Foreground="{DynamicResource AccentColor}"/>
+              </StackPanel>
+            </Border>
+            <Border Grid.Column="3"
+                    Background="{DynamicResource CardBackground}"
+                    BorderBrush="{DynamicResource CardBorder}"
+                    BorderThickness="1" CornerRadius="8" Padding="16,12">
+              <StackPanel>
+                <TextBlock Text="평균 손익" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6"/>
+                <TextBlock Text="{Binding AvgPnlText}" FontSize="18" FontWeight="Bold"
+                           Foreground="{Binding SelectedSymbolTab.TotalPnlBrush}"/>
+              </StackPanel>
+            </Border>
+          </Grid>
+
+          <Border Grid.Row="1"
+                  Background="{DynamicResource CardBackground}"
+                  BorderBrush="{DynamicResource CardBorder}"
+                  BorderThickness="1" CornerRadius="8">
+            <Grid RowDefinitions="Auto,*">
+              <Border Grid.Row="0"
+                      Background="{DynamicResource HeaderBackground}"
+                      CornerRadius="8,8,0,0" Padding="14,8">
+                <Grid ColumnDefinitions="36,64,*,80,110,90,100">
+                  <TextBlock Grid.Column="0" Text="#" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="1" Text="방향" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="2" Text="평균진입가" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="3" Text="마틴" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="4" Text="손익 (USDT)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="5" Text="손익 (%)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="6" Text="시간" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                </Grid>
+              </Border>
+              <ScrollViewer Grid.Row="1">
+                <ItemsControl ItemsSource="{Binding SelectedSymbolTab.TradeHistory}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Border Padding="14,7"
+                              BorderBrush="{DynamicResource SeparatorColor}"
+                              BorderThickness="0,0,0,1">
+                        <Grid ColumnDefinitions="36,64,*,80,110,90,100">
+                          <TextBlock Grid.Column="0" Text="{Binding Number}" Foreground="{DynamicResource TextMuted}" FontSize="12"/>
+                          <TextBlock Grid.Column="1" Text="{Binding Direction}" Foreground="{Binding DirectionBrush}" FontSize="12" FontWeight="Bold"/>
+                          <TextBlock Grid.Column="2" Text="{Binding AvgEntryText}" Foreground="{DynamicResource TextPrimary}" FontSize="12"/>
+                          <TextBlock Grid.Column="3" Text="{Binding MartinText}" Foreground="{DynamicResource TextSecondary}" FontSize="12"/>
+                          <TextBlock Grid.Column="4" Text="{Binding PnlAmountText}" Foreground="{Binding PnlBrush}" FontSize="12" FontWeight="Bold"/>
+                          <TextBlock Grid.Column="5" Text="{Binding PnlPercentText}" Foreground="{Binding PnlBrush}" FontSize="12"/>
+                          <TextBlock Grid.Column="6" Text="{Binding TimeText}" Foreground="{DynamicResource TextMuted}" FontSize="12"/>
+                        </Grid>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </Grid>
+          </Border>
+
+        </Grid>
+      </TabItem>
+
+      <!-- ══════════════ 설정 탭 ══════════════ -->
+      <TabItem Header="   설정   ">
+        <Grid ColumnDefinitions="*,*" Margin="14,12,14,14">
+
+          <!-- ── 좌측 컬럼 ── -->
+          <ScrollViewer Grid.Column="0" Margin="0,0,6,0"
+                        VerticalScrollBarVisibility="Auto"
+                        HorizontalScrollBarVisibility="Disabled">
+          <StackPanel Spacing="12">
+
+            <!-- OKX API -->
+            <Border Background="{DynamicResource CardBackground}"
+                    BorderBrush="{DynamicResource CardBorder}"
+                    BorderThickness="1" CornerRadius="10" Padding="16,14">
+              <StackPanel Spacing="11">
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
+                  <TextBlock Text="🔑" FontSize="14"/>
+                  <TextBlock Text="OKX API 인증" FontSize="13" FontWeight="Bold"
+                             Foreground="{DynamicResource AccentColor}"
+                             VerticalAlignment="Center"/>
+                </StackPanel>
+                <Rectangle Height="1" Fill="{DynamicResource SeparatorColor}"/>
+                <StackPanel Spacing="3">
+                  <TextBlock Text="API Key" FontSize="10"
+                             Foreground="{DynamicResource TextSecondary}"/>
+                  <TextBox Text="{Binding ApiKey}" PasswordChar="•" FontSize="12"/>
+                </StackPanel>
+                <StackPanel Spacing="3">
+                  <TextBlock Text="API Secret" FontSize="10"
+                             Foreground="{DynamicResource TextSecondary}"/>
+                  <TextBox Text="{Binding ApiSecret}" PasswordChar="•" FontSize="12"/>
+                </StackPanel>
+                <StackPanel Spacing="3">
+                  <TextBlock Text="Passphrase" FontSize="10"
+                             Foreground="{DynamicResource TextSecondary}"/>
+                  <TextBox Text="{Binding Passphrase}" PasswordChar="•" FontSize="12"/>
+                </StackPanel>
+                <TextBlock Text="{Binding OkxApiStatus}"
+                           FontSize="11" FontWeight="SemiBold"
+                           Foreground="{Binding OkxApiStatusBrush}"
+                           Margin="0,4,0,0"
+                           IsVisible="{Binding OkxApiStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+              </StackPanel>
+            </Border>
+
+            <!-- GPT API -->
+            <Border Background="{DynamicResource CardBackground}"
+                    BorderBrush="{DynamicResource CardBorder}"
+                    BorderThickness="1" CornerRadius="10" Padding="16,14">
+              <StackPanel Spacing="11">
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
+                  <TextBlock Text="🤖" FontSize="14"/>
+                  <TextBlock Text="GPT API" FontSize="13" FontWeight="Bold"
+                             Foreground="{DynamicResource AccentColor}"
+                             VerticalAlignment="Center"/>
+                </StackPanel>
+                <Rectangle Height="1" Fill="{DynamicResource SeparatorColor}"/>
+                <StackPanel Spacing="3">
+                  <TextBlock Text="API Key" FontSize="10"
+                             Foreground="{DynamicResource TextSecondary}"/>
+                  <TextBox Text="{Binding GptApiKey}" PasswordChar="•" FontSize="12"/>
+                </StackPanel>
+                <StackPanel Spacing="3">
+                  <TextBlock Text="모델" FontSize="10"
+                             Foreground="{DynamicResource TextSecondary}"/>
+                  <Grid ColumnDefinitions="*,6,Auto">
+                    <ComboBox Grid.Column="0"
+                              ItemsSource="{Binding GptModelOptions}"
+                              SelectedItem="{Binding SelectedGptModelInfo}"
+                              HorizontalAlignment="Stretch" FontSize="12"
+                              Foreground="{DynamicResource TextPrimary}">
+
+                      <!-- 드롭다운 선택 후 표시 (헤더) -->
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                          <Grid ColumnDefinitions="*,6,Auto" Margin="2,3">
+                            <StackPanel Grid.Column="0">
+                              <TextBlock Text="{Binding Id}"
+                                         FontSize="12" FontWeight="SemiBold"
+                                         Foreground="{DynamicResource TextPrimary}"/>
+                              <TextBlock Text="{Binding Description}"
+                                         FontSize="10"
+                                         Foreground="{DynamicResource TextSecondary}"
+                                         Margin="0,1,0,0"/>
+                            </StackPanel>
+                            <Border Grid.Column="2"
+                                    Background="{Binding BadgeColor}"
+                                    CornerRadius="4" Padding="5,2"
+                                    VerticalAlignment="Center"
+                                    IsVisible="{Binding Badge, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                              <TextBlock Text="{Binding Badge}"
+                                         FontSize="10" FontWeight="Bold"
+                                         Foreground="White"/>
+                            </Border>
+                          </Grid>
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+
+                    <Button Grid.Column="2"
+                            Content="↻"
+                            Command="{Binding RefreshGptModelsCommand}"
+                            ToolTip.Tip="OpenAI에서 최신 모델 목록 가져오기"
+                            Padding="8,0" FontSize="15"
+                            CornerRadius="6"
+                            IsEnabled="{Binding IsNotFetchingModels}"/>
+                  </Grid>
+                  <TextBlock Text="{Binding GptRefreshStatus}"
+                             FontSize="11" Margin="0,4,0,0"
+                             Foreground="{Binding GptRefreshStatusBrush}"
+                             IsVisible="{Binding GptRefreshStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                </StackPanel>
+                <Grid ColumnDefinitions="*,12,*">
+                  <StackPanel Grid.Column="0" Spacing="3">
+                    <TextBlock Text="분석 봉 개수" FontSize="10"
+                               Foreground="{DynamicResource TextSecondary}"
+                               ToolTip.Tip="GPT에게 전달할 최근 캔들 개수&#10;많을수록 더 많은 시장 흐름을 분석하지만 API 비용 증가"/>
+                    <NumericUpDown Value="{Binding GptCandleCount}"
+                                   Minimum="5" Maximum="100" Increment="5"
+                                   FormatString="F0" FontSize="12"
+                                   ToolTip.Tip="GPT에게 전달할 최근 캔들 개수&#10;많을수록 더 많은 시장 흐름을 분석하지만 API 비용 증가"/>
+                    <TextBlock Text="GPT에게 보낼 캔들 데이터 수 (많을수록 분석 정확↑, 비용↑)"
+                               FontSize="9" Foreground="{DynamicResource TextSecondary}"
+                               Opacity="0.7" TextWrapping="Wrap"/>
+                  </StackPanel>
+                  <StackPanel Grid.Column="2" Spacing="3">
+                    <TextBlock Text="신뢰도 임계값 (%)" FontSize="10"
+                               Foreground="{DynamicResource TextSecondary}"
+                               ToolTip.Tip="GPT 분석 신뢰도가 이 수치 이상일 때만 매매 진입&#10;예) 60% → GPT가 60% 미만으로 확신하면 진입하지 않음"/>
+                    <NumericUpDown Value="{Binding GptConfidenceThreshold}"
+                                   Minimum="50" Maximum="100" Increment="5"
+                                   FormatString="F0" FontSize="12"
+                                   ToolTip.Tip="GPT 분석 신뢰도가 이 수치 이상일 때만 매매 진입&#10;예) 60% → GPT가 60% 미만으로 확신하면 진입하지 않음"/>
+                    <TextBlock Text="GPT 확신도가 이 값 이상일 때만 매매 실행"
+                               FontSize="9" Foreground="{DynamicResource TextSecondary}"
+                               Opacity="0.7" TextWrapping="Wrap"/>
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+          </StackPanel>
+          </ScrollViewer>
+
+          <!-- ── 우측 컬럼 ── -->
+          <ScrollViewer Grid.Column="1" Margin="6,0,0,0"
+                        VerticalScrollBarVisibility="Auto"
+                        HorizontalScrollBarVisibility="Disabled">
+          <StackPanel Spacing="12">
+
+            <!-- Telegram 연동 -->
+            <Border Background="{DynamicResource CardBackground}"
+                    BorderBrush="{DynamicResource CardBorder}"
+                    BorderThickness="1" CornerRadius="10" Padding="16,14">
+              <StackPanel Spacing="11">
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                  <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="✈" FontSize="14"/>
+                    <TextBlock Text="Telegram" FontSize="13" FontWeight="Bold"
+                               Foreground="{DynamicResource AccentColor}"
+                               VerticalAlignment="Center"/>
+                  </StackPanel>
+                  <CheckBox Grid.Column="2"
+                            IsChecked="{Binding TelegramEnabled}"
+                            Content="활성화" FontSize="11"
+                            VerticalAlignment="Center"
+                            Foreground="{DynamicResource TextSecondary}"/>
+                </Grid>
+                <Rectangle Height="1" Fill="{DynamicResource SeparatorColor}"/>
+                <StackPanel Spacing="3">
+                  <TextBlock Text="Bot Token" FontSize="10"
+                             Foreground="{DynamicResource TextSecondary}"/>
+                  <TextBox Text="{Binding TelegramBotToken}" PasswordChar="•" FontSize="12"/>
+                </StackPanel>
+                <StackPanel Spacing="3">
+                  <TextBlock Text="Chat ID" FontSize="10"
+                             Foreground="{DynamicResource TextSecondary}"/>
+                  <TextBox Text="{Binding TelegramChatId}" FontSize="12"/>
+                </StackPanel>
+                <TextBlock Text="{Binding TelegramTestStatus}"
+                           FontSize="11" Margin="0,2,0,0"
+                           Foreground="{Binding TelegramTestStatusBrush}"
+                           IsVisible="{Binding TelegramTestStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+              </StackPanel>
+            </Border>
+
+            <!-- 알림 항목 -->
+            <Border Background="{DynamicResource CardBackground}"
+                    BorderBrush="{DynamicResource CardBorder}"
+                    BorderThickness="1" CornerRadius="10" Padding="16,14">
+              <StackPanel Spacing="9">
+                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
+                  <TextBlock Text="🔔" FontSize="14"/>
+                  <TextBlock Text="알림 항목" FontSize="13" FontWeight="Bold"
+                             Foreground="{DynamicResource AccentColor}"
+                             VerticalAlignment="Center"/>
+                </StackPanel>
+                <Rectangle Height="1" Fill="{DynamicResource SeparatorColor}"/>
+                <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto">
+                  <CheckBox Grid.Row="0" Grid.Column="0"
+                            IsChecked="{Binding NotifyBotStartStop}"
+                            Content="봇 시작 / 중지" FontSize="11"
+                            Foreground="{DynamicResource TextPrimary}"/>
+                  <CheckBox Grid.Row="0" Grid.Column="1"
+                            IsChecked="{Binding NotifyEntry}"
+                            Content="진입 시그널" FontSize="11"
+                            Foreground="{DynamicResource TextPrimary}"/>
+                  <CheckBox Grid.Row="1" Grid.Column="0"
+                            IsChecked="{Binding NotifyMartin}"
+                            Content="마틴 추가 진입" FontSize="11"
+                            Margin="0,6,0,0"
+                            Foreground="{DynamicResource TextPrimary}"/>
+                  <CheckBox Grid.Row="1" Grid.Column="1"
+                            IsChecked="{Binding NotifyTakeProfit}"
+                            Content="익절 완료" FontSize="11"
+                            Margin="0,6,0,0"
+                            Foreground="{DynamicResource TextPrimary}"/>
+                  <CheckBox Grid.Row="2" Grid.Column="0"
+                            IsChecked="{Binding NotifyStopLoss}"
+                            Content="손절 발동" FontSize="11"
+                            Margin="0,6,0,0"
+                            Foreground="{DynamicResource TextPrimary}"/>
+                  <CheckBox Grid.Row="2" Grid.Column="1"
+                            IsChecked="{Binding NotifyError}"
+                            Content="오류 알림" FontSize="11"
+                            Margin="0,6,0,0"
+                            Foreground="{DynamicResource TextPrimary}"/>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <!-- 수신 제한 시간 -->
+            <Border Background="{DynamicResource CardBackground}"
+                    BorderBrush="{DynamicResource CardBorder}"
+                    BorderThickness="1" CornerRadius="10" Padding="16,14">
+              <StackPanel Spacing="11">
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                  <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="🌙" FontSize="14"/>
+                    <TextBlock Text="수신 제한 시간" FontSize="13" FontWeight="Bold"
+                               Foreground="{DynamicResource AccentColor}"
+                               VerticalAlignment="Center"/>
+                  </StackPanel>
+                  <CheckBox Grid.Column="2"
+                            IsChecked="{Binding QuietHoursEnabled}"
+                            Content="사용" FontSize="11"
+                            VerticalAlignment="Center"
+                            Foreground="{DynamicResource TextSecondary}"/>
+                </Grid>
+                <Rectangle Height="1" Fill="{DynamicResource SeparatorColor}"/>
+                <TextBlock Text="설정한 시간대에는 알림을 수신하지 않습니다."
+                           FontSize="10" TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextMuted}"/>
+                <Grid ColumnDefinitions="*,24,*">
+                  <StackPanel Grid.Column="0" Spacing="3">
+                    <TextBlock Text="제한 시작 (HH:mm)" FontSize="10"
+                               Foreground="{DynamicResource TextSecondary}"/>
+                    <TextBox Text="{Binding QuietStart}"
+                             Watermark="23:00" FontSize="13"
+                             IsEnabled="{Binding QuietHoursEnabled}"/>
+                  </StackPanel>
+                  <TextBlock Grid.Column="1" Text="→"
+                             FontSize="14"
+                             VerticalAlignment="Bottom"
+                             HorizontalAlignment="Center"
+                             Foreground="{DynamicResource TextMuted}"
+                             Margin="0,0,0,6"/>
+                  <StackPanel Grid.Column="2" Spacing="3">
+                    <TextBlock Text="제한 종료 (HH:mm)" FontSize="10"
+                               Foreground="{DynamicResource TextSecondary}"/>
+                    <TextBox Text="{Binding QuietEnd}"
+                             Watermark="07:00" FontSize="13"
+                             IsEnabled="{Binding QuietHoursEnabled}"/>
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <!-- 저장 버튼 -->
+            <StackPanel HorizontalAlignment="Right" Spacing="4">
+              <TextBlock Text="● 저장되지 않은 변경사항이 있습니다"
+                         FontSize="10" Foreground="#E91E63"
+                         HorizontalAlignment="Right"
+                         IsVisible="{Binding HasUnsavedChanges}"/>
+              <Button Content="{Binding SaveButtonText}"
+                      Command="{Binding SaveSettingsCommand}"
+                      HorizontalAlignment="Right"
+                      Padding="20,11"
+                      Background="{DynamicResource SaveBg}"
+                      Foreground="{DynamicResource SaveFg}"
+                      FontWeight="Bold" FontSize="13" CornerRadius="8"
+                      BorderThickness="2"
+                      BorderBrush="{Binding SaveButtonBorderBrush}"/>
+            </StackPanel>
+
+          </StackPanel>
+          </ScrollViewer>
+
+        </Grid>
+      </TabItem>
+
+    </TabControl>
+  </Grid>
+</Window>

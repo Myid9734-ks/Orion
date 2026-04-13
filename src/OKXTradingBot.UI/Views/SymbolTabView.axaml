@@ -1,0 +1,415 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:OKXTradingBot.UI.ViewModels"
+             xmlns:local="using:OKXTradingBot.UI.Views"
+             x:Class="OKXTradingBot.UI.Views.SymbolTabView"
+             x:DataType="vm:SymbolTabViewModel">
+
+  <Grid ColumnDefinitions="*,310" Margin="10">
+
+    <!-- ── 좌측: 차트 + 로그 ── -->
+    <Grid Grid.Column="0" RowDefinitions="*,8,170" Margin="0,0,8,0">
+
+      <!-- 차트 -->
+      <Border Grid.Row="0"
+              Background="{DynamicResource CardBackground}"
+              BorderBrush="{DynamicResource CardBorder}"
+              BorderThickness="1" CornerRadius="8" Padding="10,8,10,6">
+        <Grid RowDefinitions="Auto,*">
+          <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,6">
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="📈" FontSize="12" VerticalAlignment="Center"/>
+              <TextBlock Text="{Binding Symbol}"
+                         FontSize="12" FontWeight="Bold"
+                         Foreground="{DynamicResource AccentColor}"
+                         VerticalAlignment="Center"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <!-- 차트 타입 선택 -->
+              <ListBox ItemsSource="{Binding ChartTypeOptions}"
+                       SelectedItem="{Binding SelectedChartTypeLabel}"
+                       Background="Transparent" BorderThickness="0">
+                <ListBox.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="2"/>
+                  </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding}" FontSize="10" Padding="5,2"/>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+              <Rectangle Width="1" Height="12" Fill="{DynamicResource CardBorder}" VerticalAlignment="Center"/>
+              <!-- 봉 선택 -->
+              <ListBox ItemsSource="{Binding BarOptions}"
+                       SelectedItem="{Binding SelectedBar}"
+                       Background="Transparent" BorderThickness="0">
+                <ListBox.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="2"/>
+                  </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock Text="{Binding}" FontSize="10" Padding="5,2"/>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </StackPanel>
+          </Grid>
+          <local:PriceChartControl Grid.Row="1"
+                                   Candles="{Binding RecentCandles}"
+                                   ChartType="{Binding SelectedChartType}"/>
+        </Grid>
+      </Border>
+
+      <!-- 매매 로그 -->
+      <Border Grid.Row="2"
+              Background="{DynamicResource CardBackground}"
+              BorderBrush="{DynamicResource CardBorder}"
+              BorderThickness="1" CornerRadius="8" Padding="12">
+        <Grid RowDefinitions="Auto,*">
+          <TextBlock Grid.Row="0" Text="📋  매매 로그"
+                     FontSize="12" FontWeight="Bold"
+                     Foreground="{DynamicResource AccentColor}"
+                     Margin="0,0,0,6"/>
+          <ScrollViewer Grid.Row="1">
+            <ItemsControl ItemsSource="{Binding Logs}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <TextBlock Text="{Binding}"
+                             FontFamily="Monospace" FontSize="11"
+                             Foreground="{DynamicResource LogText}"
+                             TextWrapping="Wrap" Margin="0,1"/>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <!-- ── 우측: 컨트롤 패널 ── -->
+    <Border Grid.Column="1"
+            Background="{DynamicResource CardBackground}"
+            BorderBrush="{DynamicResource CardBorder}"
+            BorderThickness="1" CornerRadius="8">
+      <ScrollViewer>
+        <StackPanel Margin="12,10,12,12" Spacing="6">
+
+          <!-- ▸ 기본 설정 -->
+          <TextBlock Text="기본 설정"
+                     FontSize="11" FontWeight="Bold"
+                     Foreground="{DynamicResource AccentColor}"
+                     Margin="2,0,0,3"/>
+          <Border Background="{DynamicResource AppBackground}"
+                  BorderBrush="{DynamicResource CardBorder}"
+                  BorderThickness="1" CornerRadius="6" Padding="10">
+            <StackPanel Spacing="7">
+              <!-- 심볼 -->
+              <Grid ColumnDefinitions="Auto,*">
+                <TextBlock Text="심볼" MinWidth="75" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}"
+                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <ComboBox Grid.Column="1"
+                          ItemsSource="{Binding SymbolOptions}"
+                          SelectedItem="{Binding Symbol}"
+                          HorizontalAlignment="Stretch"
+                          FontSize="12"
+                          Foreground="{DynamicResource TextPrimary}"/>
+              </Grid>
+              <!-- 중복 심볼 경고 -->
+              <TextBlock Text="{Binding SymbolDuplicateWarning}"
+                         FontSize="11" Foreground="#FF9800"
+                         TextWrapping="Wrap"
+                         IsVisible="{Binding HasSymbolDuplicateWarning}"/>
+              <!-- 레버리지 + 자동반복 -->
+              <Grid ColumnDefinitions="Auto,*,Auto">
+                <TextBlock Text="레버리지" MinWidth="75" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}"
+                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <NumericUpDown Grid.Column="1" Value="{Binding Leverage}"
+                               Minimum="1" Maximum="125" Increment="1"
+                               FormatString="F0" FontSize="12"/>
+                <CheckBox Grid.Column="2" IsChecked="{Binding AutoRepeat}"
+                          Content="자동반복" FontSize="11"
+                          Margin="8,0,0,0" VerticalAlignment="Center"
+                          Foreground="{DynamicResource TextSecondary}"/>
+              </Grid>
+              <!-- 마진 모드 -->
+              <Grid ColumnDefinitions="Auto,*">
+                <TextBlock Text="마진 모드" MinWidth="75" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}"
+                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <Grid Grid.Column="1" ColumnDefinitions="*,4,*">
+                  <Button Content="교차"
+                          Background="{Binding MarginModeCrossBg}"
+                          Foreground="{Binding MarginModeCrossFg}"
+                          FontSize="11" FontWeight="Bold"
+                          Padding="0,6" CornerRadius="5"
+                          HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Center"
+                          Click="OnMarginModeCross"/>
+                  <Button Grid.Column="2" Content="격리"
+                          Background="{Binding MarginModeIsolatedBg}"
+                          Foreground="{Binding MarginModeIsolatedFg}"
+                          FontSize="11" FontWeight="Bold"
+                          Padding="0,6" CornerRadius="5"
+                          HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Center"
+                          Click="OnMarginModeIsolated"/>
+                </Grid>
+              </Grid>
+              <!-- 투자금 -->
+              <Grid ColumnDefinitions="Auto,*">
+                <TextBlock Text="투자금(USDT)" MinWidth="75" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}"
+                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <NumericUpDown Grid.Column="1" Value="{Binding TotalBudget}"
+                               Minimum="10" Maximum="1000000" Increment="100"
+                               FormatString="F2" FontSize="12"/>
+              </Grid>
+            </StackPanel>
+          </Border>
+
+          <!-- ▸ 전략 파라미터 -->
+          <TextBlock Text="전략 파라미터"
+                     FontSize="11" FontWeight="Bold"
+                     Foreground="{DynamicResource AccentColor}"
+                     Margin="2,4,0,3"/>
+          <Border Background="{DynamicResource AppBackground}"
+                  BorderBrush="{DynamicResource CardBorder}"
+                  BorderThickness="1" CornerRadius="6" Padding="10">
+            <StackPanel Spacing="7">
+              <Grid ColumnDefinitions="Auto,*">
+                <TextBlock Text="분할 횟수" MinWidth="90" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}"
+                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <NumericUpDown Grid.Column="1" Value="{Binding MartinCount}"
+                               Minimum="1" Maximum="20" Increment="1"
+                               FormatString="F0" FontSize="13" FontWeight="Bold"/>
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*" IsEnabled="{Binding IsUniformMode}">
+                <TextBlock Text="진입 간격 (%)" MinWidth="90" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}"
+                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <NumericUpDown Grid.Column="1" Value="{Binding MartinGap}"
+                               Minimum="0.1" Maximum="10" Increment="0.1"
+                               FormatString="F1" FontSize="13" FontWeight="Bold"/>
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*">
+                <TextBlock Text="목표 수익 (%)" MinWidth="90" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}"
+                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <NumericUpDown Grid.Column="1" Value="{Binding TargetProfit}"
+                               Minimum="0.1" Maximum="10" Increment="0.1"
+                               FormatString="F1" FontSize="13" FontWeight="Bold"/>
+              </Grid>
+
+              <!-- 모드 인디케이터 + 단계별 설정 버튼 -->
+              <Grid ColumnDefinitions="*,6,Auto">
+                <Button Padding="0" Background="Transparent" BorderThickness="0"
+                        HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch"
+                        Click="OnModeIndicatorClick">
+                  <Panel>
+                    <Border IsVisible="{Binding IsUniformMode}"
+                            Background="{DynamicResource CardBorder}"
+                            CornerRadius="5" Padding="9,7">
+                      <StackPanel Spacing="2">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                          <TextBlock Text="●" FontSize="8"
+                                     Foreground="{DynamicResource TextSecondary}"
+                                     VerticalAlignment="Center"/>
+                          <TextBlock Text="균등 모드" FontSize="11" FontWeight="Bold"
+                                     Foreground="{DynamicResource TextSecondary}"/>
+                        </StackPanel>
+                        <TextBlock Text="위 단일값으로 모든 단계 동일 적용"
+                                   FontSize="10" Foreground="{DynamicResource TextSecondary}"
+                                   Opacity="0.65"/>
+                      </StackPanel>
+                    </Border>
+                    <Border IsVisible="{Binding HasCustomSteps}"
+                            BorderBrush="{DynamicResource AccentColor}"
+                            BorderThickness="1"
+                            Background="{DynamicResource AppBackground}"
+                            CornerRadius="5" Padding="9,7">
+                      <StackPanel Spacing="2">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                          <TextBlock Text="●" FontSize="8"
+                                     Foreground="{DynamicResource AccentColor}"
+                                     VerticalAlignment="Center"/>
+                          <TextBlock Text="커스텀 모드" FontSize="11" FontWeight="Bold"
+                                     Foreground="{DynamicResource AccentColor}"/>
+                        </StackPanel>
+                        <TextBlock Text="{Binding StepModeSummary}"
+                                   FontSize="10"
+                                   Foreground="{DynamicResource TextSecondary}"/>
+                      </StackPanel>
+                    </Border>
+                  </Panel>
+                </Button>
+                <Button Grid.Column="2"
+                        Content="단계별 설정 ✎"
+                        Click="OnOpenStepParams"
+                        Padding="10,0" CornerRadius="5" FontSize="11"
+                        VerticalAlignment="Stretch"
+                        HorizontalContentAlignment="Center"
+                        VerticalContentAlignment="Center"
+                        Background="{DynamicResource CardBorder}"
+                        Foreground="{DynamicResource TextPrimary}"/>
+              </Grid>
+
+              <!-- 마틴 진행 바 -->
+              <Grid ColumnDefinitions="*,Auto" Margin="0,3,0,0">
+                <ProgressBar Value="{Binding MartinStep}"
+                             Maximum="{Binding MartinCount}"
+                             Minimum="0" Height="5"
+                             Foreground="{DynamicResource AccentColor}"/>
+                <TextBlock Grid.Column="1" Text="{Binding MartinStepText}"
+                           FontSize="10" Margin="7,0,0,0"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondary}"/>
+              </Grid>
+
+              <!-- 손절 -->
+              <Grid ColumnDefinitions="Auto,*">
+                <CheckBox IsChecked="{Binding StopLossEnabled}"
+                          Content="손절 기준 (%)" MinWidth="90" FontSize="11"
+                          VerticalAlignment="Center" Margin="0,0,8,0"
+                          Foreground="{DynamicResource TextPrimary}"/>
+                <NumericUpDown Grid.Column="1" Value="{Binding StopLossPercent}"
+                               IsEnabled="{Binding StopLossEnabled}"
+                               Minimum="0.1" Maximum="50" Increment="0.5"
+                               FormatString="F1" FontSize="12"/>
+              </Grid>
+            </StackPanel>
+          </Border>
+
+          <!-- ▸ 포지션 현황 -->
+          <TextBlock Text="포지션 현황"
+                     FontSize="11" FontWeight="Bold"
+                     Foreground="{DynamicResource AccentColor}"
+                     Margin="2,4,0,3"/>
+          <Border Background="{DynamicResource AppBackground}"
+                  BorderBrush="{DynamicResource CardBorder}"
+                  BorderThickness="1" CornerRadius="6" Padding="10">
+            <StackPanel Spacing="10">
+              <Grid ColumnDefinitions="*,*">
+                <StackPanel Grid.Column="0">
+                  <TextBlock Text="방향" FontSize="10" Foreground="{DynamicResource TextSecondary}"/>
+                  <TextBlock Text="{Binding DirectionText}"
+                             FontSize="15" FontWeight="Bold"
+                             Foreground="{Binding DirectionBrush}" Margin="0,2,0,0"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1">
+                  <TextBlock Text="마틴 단계" FontSize="10" Foreground="{DynamicResource TextSecondary}"/>
+                  <TextBlock Text="{Binding MartinStepText}"
+                             FontSize="15" FontWeight="Bold"
+                             Foreground="{DynamicResource TextPrimary}" Margin="0,2,0,0"/>
+                </StackPanel>
+              </Grid>
+              <Rectangle Height="1" Fill="{DynamicResource SeparatorColor}"/>
+              <Grid ColumnDefinitions="*,*">
+                <StackPanel Grid.Column="0">
+                  <TextBlock Text="평균 진입가" FontSize="10" Foreground="{DynamicResource TextSecondary}"/>
+                  <TextBlock Text="{Binding AvgEntryPriceText}"
+                             FontSize="12" Foreground="{DynamicResource TextPrimary}" Margin="0,2,0,0"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1">
+                  <TextBlock Text="현재가" FontSize="10" Foreground="{DynamicResource TextSecondary}"/>
+                  <TextBlock Text="{Binding CurrentPriceText}"
+                             FontSize="12" Foreground="{DynamicResource PriceColor}" Margin="0,2,0,0"/>
+                </StackPanel>
+              </Grid>
+              <Grid ColumnDefinitions="*,*">
+                <StackPanel Grid.Column="0">
+                  <TextBlock Text="다음 트리거" FontSize="10" Foreground="{DynamicResource TextSecondary}"/>
+                  <TextBlock Text="{Binding NextMartinPriceText}"
+                             FontSize="12" Foreground="{DynamicResource TriggerColor}" Margin="0,2,0,0"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1">
+                  <TextBlock Text="미실현 손익" FontSize="10" Foreground="{DynamicResource TextSecondary}"/>
+                  <TextBlock Text="{Binding UnrealizedPnlText}"
+                             FontSize="12" FontWeight="Bold"
+                             Foreground="{Binding PnlBrush}" Margin="0,2,0,0"/>
+                </StackPanel>
+              </Grid>
+            </StackPanel>
+          </Border>
+
+          <!-- ▸ 투자 자동 계산 -->
+          <TextBlock Text="투자 자동 계산"
+                     FontSize="11" FontWeight="Bold"
+                     Foreground="{DynamicResource AccentColor}"
+                     Margin="2,4,0,3"/>
+          <Border Background="{DynamicResource AppBackground}"
+                  BorderBrush="{DynamicResource CardBorder}"
+                  BorderThickness="1" CornerRadius="6" Padding="10">
+            <StackPanel Spacing="7">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="필요 시드" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding RequiredSeedText}"
+                           FontSize="12" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}"/>
+              </Grid>
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="예상 수익" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding ExpectedProfitText}"
+                           FontSize="12" FontWeight="Bold" Foreground="LightGreen"/>
+              </Grid>
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="예상 수수료" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding ExpectedFeeText}"
+                           FontSize="12" Foreground="{DynamicResource TextMuted}"/>
+              </Grid>
+              <Rectangle Height="1" Fill="{DynamicResource SeparatorColor}" Margin="0,2"/>
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="1회 진입금" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding SingleOrderAmountValueText}"
+                           FontSize="12" Foreground="{DynamicResource TextPrimary}"/>
+              </Grid>
+            </StackPanel>
+          </Border>
+
+          <!-- ▸ 제어 버튼 -->
+          <StackPanel Spacing="6" Margin="0,6,0,0">
+            <Grid ColumnDefinitions="*,8,*">
+              <Button Grid.Column="0"
+                      Content="▶  시작"
+                      Command="{Binding StartCommand}"
+                      Background="{DynamicResource StartBg}"
+                      Foreground="{DynamicResource StartFg}"
+                      Padding="0,10" CornerRadius="6"
+                      FontWeight="Bold" FontSize="13"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"/>
+              <Button Grid.Column="2"
+                      Content="■  중지"
+                      Command="{Binding StopCommand}"
+                      Background="{DynamicResource StopBg}"
+                      Foreground="{DynamicResource StopFg}"
+                      Padding="0,10" CornerRadius="6"
+                      FontWeight="Bold" FontSize="13"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"/>
+            </Grid>
+            <Button Content="포지션 강제 종료"
+                    Command="{Binding ClosePositionCommand}"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Padding="0,8" CornerRadius="6" FontSize="12"
+                    Background="{DynamicResource CardBorder}"
+                    Foreground="{DynamicResource TextSecondary}"/>
+          </StackPanel>
+
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+
+  </Grid>
+</UserControl>
