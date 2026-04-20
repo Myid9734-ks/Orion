@@ -56,6 +56,7 @@ public class SymbolTabViewModel : ReactiveObject
     // ── 트레이딩 내부 ──────────────────────────────────────────────────
     private TradingCore?        _core;
     private IDataProvider?      _dataProvider;
+    private NotificationConfig  _notifyConfig = new();
     private CancellationTokenSource? _cts;
     private IDisposable?        _priceTimer;
     private IDisposable?        _chartTimer;
@@ -711,20 +712,8 @@ public class SymbolTabViewModel : ReactiveObject
 
         var config = BuildConfig(global);
 
-        // ── 알림 설정 구성 ──
-        var notifyConfig = new OKXTradingBot.Core.Models.NotificationConfig
-        {
-            Enabled            = global.TelegramEnabled,
-            NotifyBotStartStop = global.NotifyBotStartStop,
-            NotifyEntry        = global.NotifyEntry,
-            NotifyMartin       = global.NotifyMartin,
-            NotifyTakeProfit   = global.NotifyTakeProfit,
-            NotifyStopLoss     = global.NotifyStopLoss,
-            NotifyError        = global.NotifyError,
-            QuietHoursEnabled  = global.QuietHoursEnabled,
-            QuietStart         = global.QuietStart,
-            QuietEnd           = global.QuietEnd,
-        };
+        // ── 알림 설정 구성 (필드 재사용 — 설정 변경 시 in-place 갱신됨) ──
+        ApplyNotifyConfig(global);
 
         // ── 데이터 프로바이더 (실시간 — 가상매매/실거래 공통) ──
         var rest      = new OkxRestClient(config.ApiKey, config.ApiSecret, config.Passphrase,
@@ -752,8 +741,8 @@ public class SymbolTabViewModel : ReactiveObject
             AddLog($"[실거래] OKX 실주문 + Pre-orders 모드 (서버 트리거)");
         }
 
-        // ── 텔레그램 알림기 (NotificationConfig 포함) ──
-        var notifier = new TelegramNotifier(config.TelegramBotToken, config.TelegramChatId, notifyConfig);
+        // ── 텔레그램 알림기 (_notifyConfig 참조 공유 — 설정 변경 시 실시간 반영) ──
+        var notifier = new TelegramNotifier(config.TelegramBotToken, config.TelegramChatId, _notifyConfig);
 
         // ── GPT 분석기 (UseGpt 체크 + API Key 모두 있어야 활성화) ──
         OKXTradingBot.Core.Interfaces.IGptAnalyzer? gptAnalyzer = null;
@@ -783,7 +772,7 @@ public class SymbolTabViewModel : ReactiveObject
         _core = new TradingCore(
             _dataProvider, executor, config,
             NullLogger<TradingCore>.Instance,
-            notifier, notifyConfig,
+            notifier, _notifyConfig,
             gptAnalyzer,
             msg => _logService?.Write(msg));  // 로그 파일 sink
 
@@ -1170,6 +1159,27 @@ public class SymbolTabViewModel : ReactiveObject
      || _amountMode.ToString() != _savedSnapshot.AmountMode
      || _stopLossEnabled != _savedSnapshot.StopLossEnabled
      || _stopLossPercent != _savedSnapshot.StopLossPercent;
+
+    // ═══════════════════════════════════════════════════════════════════
+    // NotificationConfig 관리
+    // ═══════════════════════════════════════════════════════════════════
+
+    private void ApplyNotifyConfig(GlobalBotConfig g)
+    {
+        _notifyConfig.Enabled            = g.TelegramEnabled;
+        _notifyConfig.NotifyBotStartStop = g.NotifyBotStartStop;
+        _notifyConfig.NotifyEntry        = g.NotifyEntry;
+        _notifyConfig.NotifyMartin       = g.NotifyMartin;
+        _notifyConfig.NotifyTakeProfit   = g.NotifyTakeProfit;
+        _notifyConfig.NotifyStopLoss     = g.NotifyStopLoss;
+        _notifyConfig.NotifyError        = g.NotifyError;
+        _notifyConfig.QuietHoursEnabled  = g.QuietHoursEnabled;
+        _notifyConfig.QuietStart         = g.QuietStart;
+        _notifyConfig.QuietEnd           = g.QuietEnd;
+    }
+
+    /// <summary>봇 실행 중 설정 저장 시 호출 — 재시작 없이 즉시 반영</summary>
+    public void UpdateNotifyConfig(GlobalBotConfig g) => ApplyNotifyConfig(g);
 
     // ═══════════════════════════════════════════════════════════════════
     // TradeConfig 빌드

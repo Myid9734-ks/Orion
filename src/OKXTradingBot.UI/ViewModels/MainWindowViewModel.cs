@@ -883,6 +883,11 @@ public class MainWindowViewModel : ReactiveObject
         _globalHasChanges = false;
         foreach (var tab in SymbolTabs) tab.MarkSaved();
 
+        // 실행 중인 탭의 알림 설정 즉시 반영
+        var updatedGlobal = BuildGlobalConfig();
+        foreach (var tab in SymbolTabs.Where(t => t.IsRunning))
+            tab.UpdateNotifyConfig(updatedGlobal);
+
         _isLoading        = false;
         HasUnsavedChanges = false;
     }
