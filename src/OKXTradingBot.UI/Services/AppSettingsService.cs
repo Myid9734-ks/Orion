@@ -16,6 +16,8 @@ public class SymbolTabSettings
     public decimal       TargetProfit       { get; set; } = 0.5m;
     public List<decimal> MartinGapSteps     { get; set; } = new();
     public List<decimal> TargetProfitSteps  { get; set; } = new();
+    public List<decimal> MartinAmountWeights { get; set; } = new();
+    public string        AmountMode         { get; set; } = "Equal";
     public bool          StopLossEnabled    { get; set; } = false;
     public decimal       StopLossPercent    { get; set; } = 3.0m;
 }
@@ -33,6 +35,8 @@ public class AppSettings
     public string  GptModel               { get; set; } = "gpt-5.4-mini";
     public int     GptCandleCount         { get; set; } = 30;
     public int     GptConfidenceThreshold { get; set; } = 60;
+    public bool    UseGpt                 { get; set; } = false;  // GPT 사용 여부 (false = 가격 방향 감지)
+    public int     GptAnalysisInterval    { get; set; } = 5;      // GPT 분석 간격 (분), 기본 5분
 
     // Telegram
     public string  TelegramBotToken       { get; set; } = "";
@@ -70,6 +74,8 @@ internal class EncryptedSettings
     public string  GptModel               { get; set; } = "";
     public int     GptCandleCount         { get; set; } = 30;
     public int     GptConfidenceThreshold { get; set; } = 60;
+    public bool    UseGpt                 { get; set; } = false;
+    public int     GptAnalysisInterval    { get; set; } = 5;
     public string  TelegramChatId         { get; set; } = "";
     public bool    TelegramEnabled        { get; set; } = false;
     public bool    NotifyBotStartStop     { get; set; } = true;
@@ -150,6 +156,8 @@ public class AppSettingsService
                 GptModel               = enc.GptModel,
                 GptCandleCount         = enc.GptCandleCount,
                 GptConfidenceThreshold = enc.GptConfidenceThreshold,
+                UseGpt                 = enc.UseGpt,
+                GptAnalysisInterval    = enc.GptAnalysisInterval,
                 TelegramChatId         = enc.TelegramChatId,
                 TelegramEnabled        = enc.TelegramEnabled,
                 NotifyBotStartStop     = enc.NotifyBotStartStop,
@@ -181,6 +189,8 @@ public class AppSettingsService
             GptModel               = s.GptModel,
             GptCandleCount         = s.GptCandleCount,
             GptConfidenceThreshold = s.GptConfidenceThreshold,
+            UseGpt                 = s.UseGpt,
+            GptAnalysisInterval    = s.GptAnalysisInterval,
             TelegramChatId         = s.TelegramChatId,
             TelegramEnabled        = s.TelegramEnabled,
             NotifyBotStartStop     = s.NotifyBotStartStop,

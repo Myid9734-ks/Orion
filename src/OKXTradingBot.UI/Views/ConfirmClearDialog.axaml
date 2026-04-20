@@ -1,0 +1,42 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="OKXTradingBot.UI.Views.ConfirmClearDialog"
+        Title="데이터 초기화"
+        Width="360" Height="175"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource AppBackground}">
+
+  <StackPanel Margin="24" Spacing="20">
+
+    <StackPanel Spacing="6">
+      <TextBlock Text="매매 기록과 로그를 모두 삭제합니다."
+                 FontSize="13" FontWeight="Bold"
+                 Foreground="{DynamicResource TextPrimary}"/>
+      <TextBlock Text="이 작업은 되돌릴 수 없습니다. 계속하시겠습니까?"
+                 FontSize="12"
+                 Foreground="{DynamicResource TextSecondary}"/>
+    </StackPanel>
+
+    <Grid ColumnDefinitions="*,8,*">
+      <Button Grid.Column="0"
+              Content="삭제"
+              Click="OnConfirm"
+              HorizontalAlignment="Stretch"
+              HorizontalContentAlignment="Center"
+              Padding="0,9" CornerRadius="6"
+              FontWeight="Bold" FontSize="12"
+              Background="#E91E63" Foreground="White"/>
+      <Button Grid.Column="2"
+              Content="취소"
+              Click="OnCancel"
+              HorizontalAlignment="Stretch"
+              HorizontalContentAlignment="Center"
+              Padding="0,9" CornerRadius="6"
+              FontSize="12"
+              Background="{DynamicResource CardBorder}"
+              Foreground="{DynamicResource TextSecondary}"/>
+    </Grid>
+
+  </StackPanel>
+</Window>

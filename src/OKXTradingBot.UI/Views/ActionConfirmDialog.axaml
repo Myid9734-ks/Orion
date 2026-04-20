@@ -1,0 +1,53 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="OKXTradingBot.UI.Views.ActionConfirmDialog"
+        Title="확인"
+        Width="420" Height="230"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        SystemDecorations="BorderOnly"
+        Background="#1E1E2E">
+
+  <Border Padding="24" CornerRadius="10"
+          Background="#1E1E2E"
+          BorderBrush="#3A3A5C" BorderThickness="1">
+    <StackPanel Spacing="16">
+
+      <!-- 아이콘 + 제목 -->
+      <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
+        <TextBlock x:Name="IconText" FontSize="26" VerticalAlignment="Center"/>
+        <TextBlock x:Name="TitleText"
+                   FontSize="15" FontWeight="Bold"
+                   Foreground="#FF9800"
+                   VerticalAlignment="Center"/>
+      </StackPanel>
+
+      <!-- 본문 -->
+      <Border Background="#2A2A3E" CornerRadius="6" Padding="14,10">
+        <TextBlock x:Name="BodyText"
+                   TextWrapping="Wrap" FontSize="13" Foreground="#CCCCDD"
+                   LineHeight="22"/>
+      </Border>
+
+      <!-- 버튼 -->
+      <Grid ColumnDefinitions="*,8,*" Margin="0,4,0,0">
+        <Button x:Name="ConfirmButton"
+                Grid.Column="0"
+                Click="OnConfirm"
+                FontWeight="Bold" FontSize="13"
+                Padding="0,10" CornerRadius="6"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"/>
+        <Button Grid.Column="2"
+                Content="취소"
+                Click="OnCancel"
+                Background="#3A3A5C" Foreground="#AAAACC"
+                FontSize="13"
+                Padding="0,10" CornerRadius="6"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"/>
+      </Grid>
+
+    </StackPanel>
+  </Border>
+</Window>

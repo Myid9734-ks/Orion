@@ -6,8 +6,11 @@ using Microsoft.Extensions.Logging.Abstractions;
 using OKXTradingBot.Core.Interfaces;
 using OKXTradingBot.Core.Models;
 using OKXTradingBot.Core.Trading;
+using OKXTradingBot.Infrastructure.Backtest;
+using OKXTradingBot.Infrastructure.Gpt;
 using OKXTradingBot.Infrastructure.Notifications;
 using OKXTradingBot.Infrastructure.OKX;
+using OKXTradingBot.Infrastructure.Persistence;
 using OKXTradingBot.UI.Services;
 using OKXTradingBot.UI.Views;
 using ReactiveUI;
@@ -24,8 +27,20 @@ public class GlobalBotConfig
     public string GptModel               { get; init; } = "";
     public int    GptCandleCount         { get; init; } = 30;
     public int    GptConfidenceThreshold { get; init; } = 60;
+    public bool   UseGpt                 { get; init; } = false;
+    public int    GptAnalysisInterval    { get; init; } = 5;
     public string TelegramBotToken       { get; init; } = "";
     public string TelegramChatId         { get; init; } = "";
+    public bool   TelegramEnabled        { get; init; }
+    public bool   NotifyBotStartStop     { get; init; } = true;
+    public bool   NotifyEntry            { get; init; } = true;
+    public bool   NotifyMartin           { get; init; } = true;
+    public bool   NotifyTakeProfit       { get; init; } = true;
+    public bool   NotifyStopLoss         { get; init; } = true;
+    public bool   NotifyError            { get; init; } = true;
+    public bool   QuietHoursEnabled      { get; init; }
+    public string QuietStart             { get; init; } = "23:00";
+    public string QuietEnd               { get; init; } = "07:00";
     public bool   IsBacktestMode         { get; init; }
 }
 
@@ -51,17 +66,32 @@ public class SymbolTabViewModel : ReactiveObject
     private int                 _wsTickCount  = 0;
     private int                 _tradeSeq     = 0;
 
+    // ── 영속화 ────────────────────────────────────────────────────────
+    private readonly TradeHistoryRepository _tradeRepo = new();
+    private LogFileService? _logService;
+
+    /// <summary>
+    /// 모의거래 모드로 시작 시 사용자에게 확인을 요청하는 콜백.
+    /// View(code-behind)에서 다이얼로그를 띄워 true/false 반환.
+    /// null이면 확인 없이 진행.
+    /// </summary>
+    public Func<Task<bool>>? ConfirmMockStart    { get; set; }
+    public Func<Task<bool>>? ConfirmStop         { get; set; }
+    public Func<Task<bool>>? ConfirmForceClose   { get; set; }
+
     // ── 설정 ──────────────────────────────────────────────────────────
-    private string        _symbol            = "BTC-USDT-SWAP";
+    private string        _symbol            = "";
     private decimal       _totalBudget       = 100m;
     private int           _leverage          = 10;
     private string        _marginMode        = "Cross";
     private int           _martinCount       = 9;
     private decimal       _martinGap         = 0.5m;
     private decimal       _targetProfit      = 0.5m;
-    private List<decimal> _martinGapSteps    = new();
-    private List<decimal> _targetProfitSteps = new();
-    private bool          _stopLossEnabled   = false;
+    private List<decimal>    _martinGapSteps    = new();
+    private List<decimal>    _targetProfitSteps = new();
+    private MartinAmountMode _amountMode           = MartinAmountMode.Equal;
+    private List<decimal>    _martinAmountWeights  = new();
+    private bool             _stopLossEnabled   = false;
     private decimal       _stopLossPercent   = 3.0m;
     private bool          _autoRepeat        = true;
 
@@ -142,6 +172,9 @@ public class SymbolTabViewModel : ReactiveObject
 
         // 초기 차트 로드
         _ = RestartChartWebSocketAsync();
+
+        // DB에서 이전 거래 기록 로드
+        _ = Task.Run(LoadTradeHistoryFromDb);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -163,6 +196,23 @@ public class SymbolTabViewModel : ReactiveObject
     // ═══════════════════════════════════════════════════════════════════
     // 설정 프로퍼티
     // ═══════════════════════════════════════════════════════════════════
+
+    // 심볼 검색
+    private string _symbolSearch = "";
+    public string SymbolSearch
+    {
+        get => _symbolSearch;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _symbolSearch, value);
+            this.RaisePropertyChanged(nameof(FilteredSymbolOptions));
+        }
+    }
+
+    public IEnumerable<string> FilteredSymbolOptions =>
+        string.IsNullOrEmpty(_symbolSearch)
+            ? _symbolOptions
+            : _symbolOptions.Where(s => s.Contains(_symbolSearch, StringComparison.OrdinalIgnoreCase));
 
     // 중복 심볼 경고 텍스트
     private string _symbolDuplicateWarning = "";
@@ -211,6 +261,7 @@ public class SymbolTabViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(SingleOrderAmountText));
             this.RaisePropertyChanged(nameof(SingleOrderAmountValueText));
             this.RaisePropertyChanged(nameof(RequiredSeedText));
+            this.RaisePropertyChanged(nameof(TotalPositionText));
             this.RaisePropertyChanged(nameof(ExpectedProfitText));
             this.RaisePropertyChanged(nameof(ExpectedFeeText));
             MarkUnsaved();
@@ -223,6 +274,7 @@ public class SymbolTabViewModel : ReactiveObject
         set
         {
             this.RaiseAndSetIfChanged(ref _leverage, value);
+            this.RaisePropertyChanged(nameof(TotalPositionText));
             this.RaisePropertyChanged(nameof(ExpectedProfitText));
             MarkUnsaved();
         }
@@ -308,22 +360,78 @@ public class SymbolTabViewModel : ReactiveObject
         }
     }
 
-    public bool HasCustomSteps => _martinGapSteps.Count > 0;
+    public MartinAmountMode AmountMode
+    {
+        get => _amountMode;
+        set
+        {
+            _amountMode = value;
+            this.RaisePropertyChanged(nameof(AmountMode));
+            this.RaisePropertyChanged(nameof(HasCustomSteps));
+            this.RaisePropertyChanged(nameof(IsUniformMode));
+            this.RaisePropertyChanged(nameof(StepModeSummary));
+            this.RaisePropertyChanged(nameof(CustomStepsLabel));
+            MarkUnsaved();
+        }
+    }
+
+    public bool HasCustomSteps => _martinGapSteps.Count > 0 || _martinAmountWeights.Count > 0 || _amountMode != MartinAmountMode.Equal;
     public bool IsUniformMode  => !HasCustomSteps;
 
     public string StepModeSummary
     {
         get
         {
-            if (!HasCustomSteps) return "";
-            const int maxShow = 4;
-            var shown  = _martinGapSteps.Take(maxShow).Select(v => v.ToString("F1"));
-            var suffix = _martinGapSteps.Count > maxShow ? " ..." : "";
-            return "간격: " + string.Join(" → ", shown) + suffix;
+            var parts = new List<string>();
+
+            if (_martinGapSteps.Count > 0)
+            {
+                const int maxShow = 4;
+                var shown  = _martinGapSteps.Take(maxShow).Select(v => v.ToString("F1"));
+                var suffix = _martinGapSteps.Count > maxShow ? " ..." : "";
+                parts.Add("간격: " + string.Join(" → ", shown) + suffix);
+            }
+
+            if (_amountMode == MartinAmountMode.Multiplier)
+                parts.Add("배수");
+            else if (_amountMode == MartinAmountMode.Fibonacci)
+                parts.Add("피보나치");
+
+            return string.Join(" | ", parts);
         }
     }
 
     public string CustomStepsLabel => HasCustomSteps ? "● 커스텀" : "";
+
+    public List<decimal> MartinAmountWeights
+    {
+        get => _martinAmountWeights;
+        set
+        {
+            _martinAmountWeights = value;
+            this.RaisePropertyChanged(nameof(MartinAmountWeights));
+            this.RaisePropertyChanged(nameof(HasCustomSteps));
+            this.RaisePropertyChanged(nameof(IsUniformMode));
+            this.RaisePropertyChanged(nameof(StepModeSummary));
+            this.RaisePropertyChanged(nameof(CustomStepsLabel));
+            MarkUnsaved();
+        }
+    }
+
+    public void ResetCustomSteps()
+    {
+        _martinGapSteps    = new List<decimal>();
+        _martinAmountWeights = new List<decimal>();
+        _amountMode          = MartinAmountMode.Equal;
+        this.RaisePropertyChanged(nameof(MartinGapSteps));
+        this.RaisePropertyChanged(nameof(MartinAmountWeights));
+        this.RaisePropertyChanged(nameof(AmountMode));
+        this.RaisePropertyChanged(nameof(HasCustomSteps));
+        this.RaisePropertyChanged(nameof(IsUniformMode));
+        this.RaisePropertyChanged(nameof(StepModeSummary));
+        this.RaisePropertyChanged(nameof(CustomStepsLabel));
+        MarkUnsaved();
+    }
 
     private decimal GetMartinGapForStep(int step) =>
         _martinGapSteps.Count > 0
@@ -358,7 +466,8 @@ public class SymbolTabViewModel : ReactiveObject
         TotalBudget > 0 && MartinCount > 0
             ? $"{TotalBudget / MartinCount:F2} USDT" : "-";
 
-    public string RequiredSeedText     => TotalBudget > 0 ? $"${TotalBudget:N2}" : "-";
+    public string RequiredSeedText      => TotalBudget > 0 ? $"${TotalBudget:N2}" : "-";
+    public string TotalPositionText     => TotalBudget > 0 && Leverage > 0 ? $"${TotalBudget * Leverage:N2}" : "-";
 
     public string ExpectedProfitText =>
         TotalBudget > 0 && Leverage > 0 && TargetProfit > 0
@@ -418,11 +527,14 @@ public class SymbolTabViewModel : ReactiveObject
         private set
         {
             this.RaiseAndSetIfChanged(ref _isRunning, value);
+            this.RaisePropertyChanged(nameof(IsNotRunning));
             this.RaisePropertyChanged(nameof(StatusText));
             this.RaisePropertyChanged(nameof(StatusBrush));
             this.RaisePropertyChanged(nameof(TabHeader));
         }
     }
+
+    public bool IsNotRunning => !_isRunning;
 
     public IBrush StatusBrush => IsRunning ? Brushes.LightGreen : Brushes.Gray;
     public string StatusText  => IsRunning ? "봇 실행 중" : "대기 중";
@@ -589,35 +701,99 @@ public class SymbolTabViewModel : ReactiveObject
     private async Task StartBotAsync()
     {
         var global = _getGlobalConfig();
+
+        // 모의거래 모드일 때 사용자 확인
+        if (global.IsBacktestMode && ConfirmMockStart != null)
+        {
+            var proceed = await ConfirmMockStart();
+            if (!proceed) return;
+        }
+
         var config = BuildConfig(global);
 
+        // ── 알림 설정 구성 ──
+        var notifyConfig = new OKXTradingBot.Core.Models.NotificationConfig
+        {
+            Enabled            = global.TelegramEnabled,
+            NotifyBotStartStop = global.NotifyBotStartStop,
+            NotifyEntry        = global.NotifyEntry,
+            NotifyMartin       = global.NotifyMartin,
+            NotifyTakeProfit   = global.NotifyTakeProfit,
+            NotifyStopLoss     = global.NotifyStopLoss,
+            NotifyError        = global.NotifyError,
+            QuietHoursEnabled  = global.QuietHoursEnabled,
+            QuietStart         = global.QuietStart,
+            QuietEnd           = global.QuietEnd,
+        };
+
+        // ── 데이터 프로바이더 (실시간 — 가상매매/실거래 공통) ──
         var rest      = new OkxRestClient(config.ApiKey, config.ApiSecret, config.Passphrase,
                             NullLogger<OkxRestClient>.Instance);
         var ws        = new OkxWebSocketClient(NullLogger<OkxWebSocketClient>.Instance);
         _dataProvider = new OkxDataProvider(ws, rest, config.Symbol);
 
+        // ── 주문 실행기: 가상매매 vs 실거래 (이것만 교체하면 끝) ──
         IOrderExecutor executor;
         if (global.IsBacktestMode)
         {
-            executor = new OKXTradingBot.Infrastructure.Backtest.VirtualOrderExecutor(config.TotalBudget);
-            AddLog($"[백테스트] 가상 잔고 {config.TotalBudget:N2} USDT 으로 시작");
+            executor = new VirtualOrderExecutor(_dataProvider, config.TotalBudget);
+            AddLog($"[가상매매] 가상 잔고 {config.TotalBudget:N2} USDT | 실시간 데이터 + 가상 주문");
         }
         else
         {
-            executor = new OkxOrderExecutor(rest, NullLogger<OkxOrderExecutor>.Instance);
+            // 실거래: Private WS 포함 OkxOrderExecutor
+            var privWs = new OkxPrivateWebSocketClient(
+                config.ApiKey, config.ApiSecret, config.Passphrase,
+                NullLogger<OkxPrivateWebSocketClient>.Instance);
+            var realExecutor = new OkxOrderExecutor(rest, privWs,
+                NullLogger<OkxOrderExecutor>.Instance);
+            realExecutor.SetSymbolForPrivateStream(config.Symbol);
+            executor = realExecutor;
+            AddLog($"[실거래] OKX 실주문 + Pre-orders 모드 (서버 트리거)");
         }
 
-        var notifier = new TelegramNotifier(config.TelegramBotToken, config.TelegramChatId);
+        // ── 텔레그램 알림기 (NotificationConfig 포함) ──
+        var notifier = new TelegramNotifier(config.TelegramBotToken, config.TelegramChatId, notifyConfig);
 
-        _core = new TradingCore(_dataProvider, executor, config,
-                    NullLogger<TradingCore>.Instance, notifier);
+        // ── GPT 분석기 (UseGpt 체크 + API Key 모두 있어야 활성화) ──
+        OKXTradingBot.Core.Interfaces.IGptAnalyzer? gptAnalyzer = null;
+        if (global.UseGpt)
+        {
+            if (!string.IsNullOrEmpty(global.GptApiKey))
+            {
+                gptAnalyzer = new GptAnalyzer(global.GptApiKey, global.GptModel,
+                                  NullLogger<GptAnalyzer>.Instance);
+                AddLog($"[GPT] 활성화 — 모델: {global.GptModel} | 신뢰도 임계값: {global.GptConfidenceThreshold}%");
+            }
+            else
+            {
+                AddLog("[GPT] 사용 설정됨 but API Key 없음 → 가격 방향 감지 모드로 전환");
+            }
+        }
+        else
+        {
+            AddLog("[GPT 미사용] 가격 방향 감지 모드 — 봇 시작가 기준 다음 캔들 방향으로 진입");
+        }
+
+        // ── 로그 파일 서비스 ──
+        _logService = new LogFileService(_symbol, _martinCount);
+        _logService.WriteSeparator(global.IsBacktestMode ? "가상매매 시작" : "실거래 시작");
+
+        // ── TradingCore 생성 ──
+        _core = new TradingCore(
+            _dataProvider, executor, config,
+            NullLogger<TradingCore>.Instance,
+            notifier, notifyConfig,
+            gptAnalyzer,
+            msg => _logService?.Write(msg));  // 로그 파일 sink
 
         _core.OnPositionUpdated += HandlePositionUpdated;
         _core.OnLogMessage      += HandleLogMessage;
+        _core.OnTradeClosed     += HandleTradeClosed;
 
         _cts      = new CancellationTokenSource();
         IsRunning = true;
-        AddLog(global.IsBacktestMode ? "봇 시작 중... [백테스트]" : "봇 시작 중... [실거래]");
+        AddLog(global.IsBacktestMode ? "봇 시작 중... [가상매매]" : "봇 시작 중... [실거래]");
 
         StartPricePolling();
         await _core.StartAsync(AutoRepeat, _cts.Token);
@@ -625,17 +801,23 @@ public class SymbolTabViewModel : ReactiveObject
 
     private async Task StopBotAsync()
     {
+        if (ConfirmStop != null && !await ConfirmStop()) return;
+
         StopPricePolling();
         if (_core != null) await _core.StopAsync();
         _cts?.Cancel();
         IsRunning = false;
+        _logService?.WriteSeparator("봇 중지");
     }
 
     private async Task ClosePositionAsync()
     {
+        if (ConfirmForceClose != null && !await ConfirmForceClose()) return;
+
         AddLog("[제어] 포지션 강제 종료 요청");
+        if (_core != null)
+            await _core.ForceCloseAsync();
         StopPricePolling();
-        if (_core != null) await _core.StopAsync();
         _cts?.Cancel();
         IsRunning = false;
     }
@@ -754,31 +936,11 @@ public class SymbolTabViewModel : ReactiveObject
                 TotalAmount      = pos.TotalAmount;
                 AvgEntryPrice    = pos.AvgEntryPrice;
                 NextMartinPrice  = pos.GetNextMartinTriggerPrice(GetMartinGapForStep(pos.MartinStep));
-                if (CurrentPrice > 0)
-                    UnrealizedPnlPct = pos.GetUnrealizedPnlPercent(CurrentPrice);
+                UnrealizedPnlPct = pos.CurrentPnlPercent;
             }
             else if (pos.Status == PositionStatus.Closed)
             {
-                var pnlPct = pos.TotalAmount > 0 && Leverage > 0
-                    ? pos.RealizedPnl / (pos.TotalAmount * Leverage) * 100m : 0m;
-                var record = new TradeRecord
-                {
-                    Number        = ++_tradeSeq,
-                    Symbol        = _symbol,
-                    Direction     = pos.Direction == TradeDirection.Long ? "LONG" : "SHORT",
-                    AvgEntry      = pos.AvgEntryPrice,
-                    TotalInvested = pos.TotalAmount,
-                    MartinStep    = pos.MartinStep,
-                    MartinMax     = MartinCount,
-                    PnlAmount     = pos.RealizedPnl,
-                    PnlPercent    = pnlPct,
-                    ClosedAt      = pos.ClosedAt ?? DateTime.Now
-                };
-                TradeHistory.Insert(0, record);
-                TotalPnl += pos.RealizedPnl;
-                if (pos.RealizedPnl > 0) WinCount++;
-                else                     LossCount++;
-
+                // UI 상태 초기화 (TradeRecord는 HandleTradeClosed에서 처리)
                 DirectionText    = "-";
                 DirectionBrush   = Brushes.Gray;
                 MartinStep       = 0;
@@ -788,16 +950,116 @@ public class SymbolTabViewModel : ReactiveObject
                 UnrealizedPnlPct = 0;
                 RealizedPnl      = pos.RealizedPnl;
             }
+            else if (pos.Status == PositionStatus.None)
+            {
+                // 자동반복 대기 상태
+                PositionStatusText = "다음 사이클 대기 중";
+            }
+        });
+    }
+
+    /// <summary>거래(사이클) 완료 이벤트 핸들러 — TradeRecord 생성 + 통계 + DB 저장</summary>
+    private void HandleTradeClosed(object? sender, OKXTradingBot.Core.Models.TradeClosedEventArgs e)
+    {
+        // DB 저장 (백그라운드, UI 블로킹 방지)
+        Task.Run(() =>
+        {
+            try { _tradeRepo.Save(e); }
+            catch { /* 저장 실패는 무시 */ }
+        });
+
+        // UI 업데이트
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            var record = new TradeRecord
+            {
+                Number        = ++_tradeSeq,
+                Symbol        = e.Symbol,
+                Direction     = e.Direction == TradeDirection.Long ? "LONG" : "SHORT",
+                AvgEntry      = e.AvgEntryPrice,
+                TotalInvested = e.TotalAmount,
+                MartinStep    = e.MartinStep,
+                MartinMax     = e.MartinMax,
+                PnlAmount     = e.PnlAmount,
+                PnlPercent    = e.PnlPercent,
+                ClosedAt      = e.ClosedAt
+            };
+
+            TradeHistory.Insert(0, record);
+            TotalPnl += e.PnlAmount;
+            if (e.PnlAmount > 0) WinCount++;
+            else                 LossCount++;
         });
     }
 
     private void HandleLogMessage(object? sender, string message)
         => Avalonia.Threading.Dispatcher.UIThread.Post(() => AddLog(message));
 
+    /// <summary>앱 시작 시 DB에서 이전 거래 기록 로드 (해당 심볼만)</summary>
+    private void LoadTradeHistoryFromDb()
+    {
+        try
+        {
+            var records = _tradeRepo.LoadAll(_symbol);
+            if (records.Count == 0) return;
+
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                TradeHistory.Clear();
+                _tradeSeq = 0;
+                decimal totalPnl = 0;
+                int wins = 0, losses = 0;
+
+                foreach (var e in records) // 이미 최신순
+                {
+                    var record = new TradeRecord
+                    {
+                        Number        = ++_tradeSeq,
+                        Symbol        = e.Symbol,
+                        Direction     = e.Direction == TradeDirection.Long ? "LONG" : "SHORT",
+                        AvgEntry      = e.AvgEntryPrice,
+                        TotalInvested = e.TotalAmount,
+                        MartinStep    = e.MartinStep,
+                        MartinMax     = e.MartinMax,
+                        PnlAmount     = e.PnlAmount,
+                        PnlPercent    = e.PnlPercent,
+                        ClosedAt      = e.ClosedAt
+                    };
+                    TradeHistory.Add(record);
+                    totalPnl += e.PnlAmount;
+                    if (e.PnlAmount > 0) wins++;
+                    else                 losses++;
+                }
+
+                TotalPnl  = totalPnl;
+                WinCount  = wins;
+                LossCount = losses;
+
+                AddLog($"[DB] 이전 거래 기록 {records.Count}건 복원 | 누적 손익: {totalPnl:+0.00;-0.00} USDT");
+            });
+        }
+        catch (Exception ex)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                AddLog($"[DB] 거래 기록 로드 실패: {ex.Message}"));
+        }
+    }
+
     public void AddLog(string message)
     {
         Logs.Insert(0, message);
         while (Logs.Count > 500) Logs.RemoveAt(Logs.Count - 1);
+    }
+
+    /// <summary>UI 거래 기록 및 통계 초기화 (DB 삭제는 호출자가 처리)</summary>
+    public void ClearHistory()
+    {
+        TradeHistory.Clear();
+        Logs.Clear();
+        _tradeSeq = 0;
+        TotalPnl  = 0;
+        WinCount  = 0;
+        LossCount = 0;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -814,25 +1076,29 @@ public class SymbolTabViewModel : ReactiveObject
         MartinGap         = _martinGap,
         TargetProfit      = _targetProfit,
         MartinGapSteps    = new List<decimal>(_martinGapSteps),
-        TargetProfitSteps = new List<decimal>(_targetProfitSteps),
-        StopLossEnabled   = _stopLossEnabled,
-        StopLossPercent   = _stopLossPercent,
+        TargetProfitSteps  = new List<decimal>(_targetProfitSteps),
+        MartinAmountWeights  = new List<decimal>(_martinAmountWeights),
+        AmountMode         = _amountMode.ToString(),
+        StopLossEnabled    = _stopLossEnabled,
+        StopLossPercent    = _stopLossPercent,
     };
 
     public void ApplySettings(SymbolTabSettings s)
     {
-        _isLoading        = true;
-        _symbol           = s.Symbol;
-        _totalBudget      = s.TotalBudget;
-        _leverage         = s.Leverage;
-        _marginMode       = s.MarginMode;
-        _martinCount      = s.MartinCount;
-        _martinGap        = s.MartinGap;
-        _targetProfit     = s.TargetProfit;
-        _martinGapSteps   = new List<decimal>(s.MartinGapSteps);
+        _isLoading         = true;
+        _symbol            = s.Symbol;
+        _totalBudget       = s.TotalBudget;
+        _leverage          = s.Leverage;
+        _marginMode        = s.MarginMode;
+        _martinCount       = s.MartinCount;
+        _martinGap         = s.MartinGap;
+        _targetProfit      = s.TargetProfit;
+        _martinGapSteps    = new List<decimal>(s.MartinGapSteps);
         _targetProfitSteps = new List<decimal>(s.TargetProfitSteps);
-        _stopLossEnabled  = s.StopLossEnabled;
-        _stopLossPercent  = s.StopLossPercent;
+        _martinAmountWeights = new List<decimal>(s.MartinAmountWeights);
+        _amountMode        = Enum.TryParse<MartinAmountMode>(s.AmountMode, out var am) ? am : MartinAmountMode.Equal;
+        _stopLossEnabled   = s.StopLossEnabled;
+        _stopLossPercent   = s.StopLossPercent;
         _isLoading = false;
 
         // UI 갱신
@@ -852,6 +1118,8 @@ public class SymbolTabViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(IsUniformMode));
         this.RaisePropertyChanged(nameof(StepModeSummary));
         this.RaisePropertyChanged(nameof(CustomStepsLabel));
+        this.RaisePropertyChanged(nameof(AmountMode));
+        this.RaisePropertyChanged(nameof(MartinAmountWeights));
         this.RaisePropertyChanged(nameof(StopLossEnabled));
         this.RaisePropertyChanged(nameof(StopLossPercent));
         this.RaisePropertyChanged(nameof(SingleOrderAmountText));
@@ -898,6 +1166,8 @@ public class SymbolTabViewModel : ReactiveObject
      || _targetProfit    != _savedSnapshot.TargetProfit
      || !_martinGapSteps.SequenceEqual(_savedSnapshot.MartinGapSteps)
      || !_targetProfitSteps.SequenceEqual(_savedSnapshot.TargetProfitSteps)
+     || !_martinAmountWeights.SequenceEqual(_savedSnapshot.MartinAmountWeights)
+     || _amountMode.ToString() != _savedSnapshot.AmountMode
      || _stopLossEnabled != _savedSnapshot.StopLossEnabled
      || _stopLossPercent != _savedSnapshot.StopLossPercent;
 
@@ -914,6 +1184,7 @@ public class SymbolTabViewModel : ReactiveObject
         GptModel               = global.GptModel,
         GptCandleCount         = global.GptCandleCount,
         GptConfidenceThreshold = global.GptConfidenceThreshold,
+        GptAnalysisInterval    = global.GptAnalysisInterval,
         Symbol                 = _symbol,
         TotalBudget            = _totalBudget,
         Leverage               = _leverage,
@@ -923,6 +1194,8 @@ public class SymbolTabViewModel : ReactiveObject
         TargetProfit           = _targetProfit,
         MartinGapSteps         = new List<decimal>(_martinGapSteps),
         TargetProfitSteps      = new List<decimal>(_targetProfitSteps),
+        MartinAmountWeights    = new List<decimal>(_martinAmountWeights),
+        AmountMode             = _amountMode,
         StopLossEnabled        = _stopLossEnabled,
         StopLossPercent        = _stopLossPercent,
         TelegramBotToken       = global.TelegramBotToken,

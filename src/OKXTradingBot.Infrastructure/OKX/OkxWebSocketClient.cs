@@ -29,7 +29,8 @@ public class OkxWebSocketClient : IAsyncDisposable
 
     // 현재 수신 중인 미완성 봉 (봉 완성 감지용)
     private Candle? _currentCandle;
-    private string  _bar = "1m";
+    private string  _bar    = "1m";
+    private string  _instId = "";
 
     public OkxWebSocketClient(ILogger<OkxWebSocketClient> logger)
     {
@@ -38,27 +39,31 @@ public class OkxWebSocketClient : IAsyncDisposable
 
     public async Task StartAsync(string instId, CancellationToken ct, string bar = "1m")
     {
-        _bar = bar;
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        _ws  = new ClientWebSocket();
+        _bar    = bar;
+        _instId = instId;
+        _cts    = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _ws     = new ClientWebSocket();
         _ws.Options.RemoteCertificateValidationCallback = (_, _, _, _) => true;
 
-        // 캔들 채널은 business 엔드포인트, 나머지는 public
         var wsUrl = bar != null && bar != "" ? WsBusiness : WsPublic;
         _logger.LogInformation("WebSocket 연결 중: {url}", wsUrl);
         await _ws.ConnectAsync(new Uri(wsUrl), _cts.Token);
         _logger.LogInformation("WebSocket 연결 완료");
 
-        // 봉 채널 구독
-        var channel      = $"candle{bar}";
+        await SubscribeCandleAsync();
+
+        _receiveTask = ReceiveLoopAsync(_cts.Token);
+    }
+
+    private async Task SubscribeCandleAsync()
+    {
+        var channel      = $"candle{_bar}";
         var subscribeMsg = JsonSerializer.Serialize(new
         {
             op   = "subscribe",
-            args = new[] { new { channel, instId } }
+            args = new[] { new { channel, instId = _instId } }
         });
         await SendAsync(subscribeMsg);
-
-        _receiveTask = ReceiveLoopAsync(_cts.Token);
     }
 
     public async Task StopAsync()
@@ -160,6 +165,10 @@ public class OkxWebSocketClient : IAsyncDisposable
         _ws.Options.RemoteCertificateValidationCallback = (_, _, _, _) => true;
         await _ws.ConnectAsync(new Uri(WsBusiness), ct);
         _logger.LogInformation("WebSocket 재연결 완료");
+
+        // 재연결 후 캔들 채널 재구독
+        await SubscribeCandleAsync();
+        _logger.LogInformation("캔들 채널 재구독 완료: candle{bar} {instId}", _bar, _instId);
     }
 
     private async Task PingLoopAsync(CancellationToken ct)

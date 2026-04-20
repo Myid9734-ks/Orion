@@ -41,42 +41,47 @@ public partial class MainWindow : Window
     {
         if (_isSwitchingTab) return;
         if (DataContext is not MainWindowViewModel vm) return;
-        if (!vm.HasUnsavedChanges) return;
+
+        var fromIndex = _previousTabIndex;
+        _previousTabIndex = MainTabControl.SelectedIndex;
 
         // 설정 탭(index 2)에서 나가는 경우만 체크
-        if (_previousTabIndex != 2)
-        {
-            _previousTabIndex = MainTabControl.SelectedIndex;
-            return;
-        }
+        if (fromIndex != 2) return;
 
+        // 전역 설정 변경사항이 없으면 다이얼로그 생략
+        if (!vm.HasGlobalUnsavedChanges) return;
+
+        // 다이얼로그 표시 동안 설정 탭으로 복귀
         _isSwitchingTab = true;
-        MainTabControl.SelectedIndex = _previousTabIndex;
+        MainTabControl.SelectedIndex = fromIndex;
+        _previousTabIndex = fromIndex;
         _isSwitchingTab = false;
 
         var dialog = new UnsavedChangesDialog();
         var result = await dialog.ShowDialog<UnsavedChangesResult>(this);
 
+        var targetIndex = GetAddedIndex(e);
         switch (result)
         {
             case UnsavedChangesResult.Save:
                 vm.SaveSettingsCommand.Execute().Subscribe();
                 _isSwitchingTab = true;
-                MainTabControl.SelectedIndex = GetAddedIndex(e);
-                _previousTabIndex = MainTabControl.SelectedIndex;
+                MainTabControl.SelectedIndex = targetIndex;
+                _previousTabIndex = targetIndex;
                 _isSwitchingTab = false;
                 break;
 
             case UnsavedChangesResult.Discard:
                 vm.DiscardChanges();
                 _isSwitchingTab = true;
-                MainTabControl.SelectedIndex = GetAddedIndex(e);
-                _previousTabIndex = MainTabControl.SelectedIndex;
+                MainTabControl.SelectedIndex = targetIndex;
+                _previousTabIndex = targetIndex;
                 _isSwitchingTab = false;
                 break;
 
             case UnsavedChangesResult.Cancel:
             default:
+                // 설정 탭에 머무름 (_previousTabIndex 이미 fromIndex로 복귀됨)
                 break;
         }
     }
@@ -104,5 +109,13 @@ public partial class MainWindow : Window
         if (btn.Tag is not SymbolTabViewModel tab) return;
         if (DataContext is MainWindowViewModel vm)
             vm.RemoveSymbolTabCommand.Execute(tab).Subscribe();
+    }
+
+    private async void OnClearDataClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainWindowViewModel vm) return;
+        var dialog = new ConfirmClearDialog();
+        var confirmed = await dialog.ShowDialog<bool>(this);
+        if (confirmed) vm.ClearData();
     }
 }

@@ -119,9 +119,51 @@
 
       <!-- ══════════════ 수익률 탭 ══════════════ -->
       <TabItem Header="   수익률   ">
-        <Grid RowDefinitions="Auto,*" Margin="14">
+        <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="14">
 
-          <Grid Grid.Row="0" ColumnDefinitions="*,*,*,*" Margin="0,0,0,12">
+          <!-- ── 필터 행 ── -->
+          <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,10">
+
+            <!-- 심볼 콤보박스 -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <TextBlock Text="심볼" FontSize="12" Foreground="{DynamicResource TextSecondary}"
+                         VerticalAlignment="Center"/>
+              <ComboBox ItemsSource="{Binding PnlSymbolOptions}"
+                        SelectedItem="{Binding SelectedPnlSymbol}"
+                        MinWidth="160" FontSize="12"/>
+            </StackPanel>
+
+            <!-- 기간 필터 버튼 -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
+              <Button Content="🗑 초기화"
+                      Click="OnClearDataClick"
+                      Padding="12,5" FontSize="12" CornerRadius="6"
+                      Background="#E91E63" Foreground="White"/>
+              <Button Content="전체"
+                      Command="{Binding SetPnlPeriodCommand}" CommandParameter="전체"
+                      Background="{Binding PnlPeriodAllBg}" Foreground="{Binding PnlPeriodAllFg}"
+                      Padding="12,5" FontSize="12" CornerRadius="6"/>
+              <Button Content="일간"
+                      Command="{Binding SetPnlPeriodCommand}" CommandParameter="일간"
+                      Background="{Binding PnlPeriodDailyBg}" Foreground="{Binding PnlPeriodDailyFg}"
+                      Padding="12,5" FontSize="12" CornerRadius="6"/>
+              <Button Content="주간"
+                      Command="{Binding SetPnlPeriodCommand}" CommandParameter="주간"
+                      Background="{Binding PnlPeriodWeeklyBg}" Foreground="{Binding PnlPeriodWeeklyFg}"
+                      Padding="12,5" FontSize="12" CornerRadius="6"/>
+              <Button Content="월간"
+                      Command="{Binding SetPnlPeriodCommand}" CommandParameter="월간"
+                      Background="{Binding PnlPeriodMonthlyBg}" Foreground="{Binding PnlPeriodMonthlyFg}"
+                      Padding="12,5" FontSize="12" CornerRadius="6"/>
+              <Button Content="연간"
+                      Command="{Binding SetPnlPeriodCommand}" CommandParameter="연간"
+                      Background="{Binding PnlPeriodYearlyBg}" Foreground="{Binding PnlPeriodYearlyFg}"
+                      Padding="12,5" FontSize="12" CornerRadius="6"/>
+            </StackPanel>
+          </Grid>
+
+          <!-- ── 요약 카드 ── -->
+          <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*" Margin="0,0,0,12">
             <Border Grid.Column="0"
                     Background="{DynamicResource CardBackground}"
                     BorderBrush="{DynamicResource CardBorder}"
@@ -130,8 +172,8 @@
               <StackPanel>
                 <TextBlock Text="총 실현 손익" FontSize="11"
                            Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6"/>
-                <TextBlock Text="{Binding SelectedSymbolTab.TotalPnlText, FallbackValue=-}" FontSize="18" FontWeight="Bold"
-                           Foreground="{Binding SelectedSymbolTab.TotalPnlBrush}"/>
+                <TextBlock Text="{Binding FilteredTotalPnlText}" FontSize="18" FontWeight="Bold"
+                           Foreground="{Binding FilteredTotalPnlBrush}"/>
               </StackPanel>
             </Border>
             <Border Grid.Column="1"
@@ -142,7 +184,7 @@
               <StackPanel>
                 <TextBlock Text="총 거래 횟수" FontSize="11"
                            Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6"/>
-                <TextBlock Text="{Binding SelectedSymbolTab.TradeCountText, FallbackValue=-}" FontSize="18" FontWeight="Bold"
+                <TextBlock Text="{Binding FilteredTradeCountText}" FontSize="18" FontWeight="Bold"
                            Foreground="{DynamicResource TextPrimary}"/>
               </StackPanel>
             </Border>
@@ -154,7 +196,7 @@
               <StackPanel>
                 <TextBlock Text="승률" FontSize="11"
                            Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6"/>
-                <TextBlock Text="{Binding SelectedSymbolTab.WinRateText, FallbackValue=-}" FontSize="18" FontWeight="Bold"
+                <TextBlock Text="{Binding FilteredWinRateText}" FontSize="18" FontWeight="Bold"
                            Foreground="{DynamicResource AccentColor}"/>
               </StackPanel>
             </Border>
@@ -165,13 +207,14 @@
               <StackPanel>
                 <TextBlock Text="평균 손익" FontSize="11"
                            Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6"/>
-                <TextBlock Text="{Binding AvgPnlText}" FontSize="18" FontWeight="Bold"
-                           Foreground="{Binding SelectedSymbolTab.TotalPnlBrush}"/>
+                <TextBlock Text="{Binding FilteredAvgPnlText}" FontSize="18" FontWeight="Bold"
+                           Foreground="{Binding FilteredTotalPnlBrush}"/>
               </StackPanel>
             </Border>
           </Grid>
 
-          <Border Grid.Row="1"
+          <!-- ── 거래 내역 리스트 ── -->
+          <Border Grid.Row="3"
                   Background="{DynamicResource CardBackground}"
                   BorderBrush="{DynamicResource CardBorder}"
                   BorderThickness="1" CornerRadius="8">
@@ -179,31 +222,33 @@
               <Border Grid.Row="0"
                       Background="{DynamicResource HeaderBackground}"
                       CornerRadius="8,8,0,0" Padding="14,8">
-                <Grid ColumnDefinitions="36,64,*,80,110,90,100">
+                <Grid ColumnDefinitions="36,120,64,*,80,110,90,100">
                   <TextBlock Grid.Column="0" Text="#" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="1" Text="방향" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="2" Text="평균진입가" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="3" Text="마틴" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="4" Text="손익 (USDT)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="5" Text="손익 (%)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="6" Text="시간" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="1" Text="심볼" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="2" Text="방향" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="3" Text="평균진입가" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="4" Text="마틴" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="5" Text="손익 (USDT)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="6" Text="손익 (%)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="7" Text="시간" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
                 </Grid>
               </Border>
               <ScrollViewer Grid.Row="1">
-                <ItemsControl ItemsSource="{Binding SelectedSymbolTab.TradeHistory}">
+                <ItemsControl ItemsSource="{Binding FilteredTradeHistory}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
                       <Border Padding="14,7"
                               BorderBrush="{DynamicResource SeparatorColor}"
                               BorderThickness="0,0,0,1">
-                        <Grid ColumnDefinitions="36,64,*,80,110,90,100">
+                        <Grid ColumnDefinitions="36,120,64,*,80,110,90,100">
                           <TextBlock Grid.Column="0" Text="{Binding Number}" Foreground="{DynamicResource TextMuted}" FontSize="12"/>
-                          <TextBlock Grid.Column="1" Text="{Binding Direction}" Foreground="{Binding DirectionBrush}" FontSize="12" FontWeight="Bold"/>
-                          <TextBlock Grid.Column="2" Text="{Binding AvgEntryText}" Foreground="{DynamicResource TextPrimary}" FontSize="12"/>
-                          <TextBlock Grid.Column="3" Text="{Binding MartinText}" Foreground="{DynamicResource TextSecondary}" FontSize="12"/>
-                          <TextBlock Grid.Column="4" Text="{Binding PnlAmountText}" Foreground="{Binding PnlBrush}" FontSize="12" FontWeight="Bold"/>
-                          <TextBlock Grid.Column="5" Text="{Binding PnlPercentText}" Foreground="{Binding PnlBrush}" FontSize="12"/>
-                          <TextBlock Grid.Column="6" Text="{Binding TimeText}" Foreground="{DynamicResource TextMuted}" FontSize="12"/>
+                          <TextBlock Grid.Column="1" Text="{Binding Symbol}" Foreground="{DynamicResource TextSecondary}" FontSize="11"/>
+                          <TextBlock Grid.Column="2" Text="{Binding Direction}" Foreground="{Binding DirectionBrush}" FontSize="12" FontWeight="Bold"/>
+                          <TextBlock Grid.Column="3" Text="{Binding AvgEntryText}" Foreground="{DynamicResource TextPrimary}" FontSize="12"/>
+                          <TextBlock Grid.Column="4" Text="{Binding MartinText}" Foreground="{DynamicResource TextSecondary}" FontSize="12"/>
+                          <TextBlock Grid.Column="5" Text="{Binding PnlAmountText}" Foreground="{Binding PnlBrush}" FontSize="12" FontWeight="Bold"/>
+                          <TextBlock Grid.Column="6" Text="{Binding PnlPercentText}" Foreground="{Binding PnlBrush}" FontSize="12"/>
+                          <TextBlock Grid.Column="7" Text="{Binding TimeText}" Foreground="{DynamicResource TextMuted}" FontSize="12"/>
                         </Grid>
                       </Border>
                     </DataTemplate>
@@ -266,94 +311,130 @@
                     BorderBrush="{DynamicResource CardBorder}"
                     BorderThickness="1" CornerRadius="10" Padding="16,14">
               <StackPanel Spacing="11">
-                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
-                  <TextBlock Text="🤖" FontSize="14"/>
-                  <TextBlock Text="GPT API" FontSize="13" FontWeight="Bold"
-                             Foreground="{DynamicResource AccentColor}"
-                             VerticalAlignment="Center"/>
-                </StackPanel>
-                <Rectangle Height="1" Fill="{DynamicResource SeparatorColor}"/>
-                <StackPanel Spacing="3">
-                  <TextBlock Text="API Key" FontSize="10"
-                             Foreground="{DynamicResource TextSecondary}"/>
-                  <TextBox Text="{Binding GptApiKey}" PasswordChar="•" FontSize="12"/>
-                </StackPanel>
-                <StackPanel Spacing="3">
-                  <TextBlock Text="모델" FontSize="10"
-                             Foreground="{DynamicResource TextSecondary}"/>
-                  <Grid ColumnDefinitions="*,6,Auto">
-                    <ComboBox Grid.Column="0"
-                              ItemsSource="{Binding GptModelOptions}"
-                              SelectedItem="{Binding SelectedGptModelInfo}"
-                              HorizontalAlignment="Stretch" FontSize="12"
-                              Foreground="{DynamicResource TextPrimary}">
 
-                      <!-- 드롭다운 선택 후 표시 (헤더) -->
-                      <ComboBox.ItemTemplate>
-                        <DataTemplate>
-                          <Grid ColumnDefinitions="*,6,Auto" Margin="2,3">
-                            <StackPanel Grid.Column="0">
-                              <TextBlock Text="{Binding Id}"
-                                         FontSize="12" FontWeight="SemiBold"
-                                         Foreground="{DynamicResource TextPrimary}"/>
-                              <TextBlock Text="{Binding Description}"
-                                         FontSize="10"
-                                         Foreground="{DynamicResource TextSecondary}"
-                                         Margin="0,1,0,0"/>
-                            </StackPanel>
-                            <Border Grid.Column="2"
-                                    Background="{Binding BadgeColor}"
-                                    CornerRadius="4" Padding="5,2"
-                                    VerticalAlignment="Center"
-                                    IsVisible="{Binding Badge, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
-                              <TextBlock Text="{Binding Badge}"
-                                         FontSize="10" FontWeight="Bold"
-                                         Foreground="White"/>
-                            </Border>
-                          </Grid>
-                        </DataTemplate>
-                      </ComboBox.ItemTemplate>
-                    </ComboBox>
-
-                    <Button Grid.Column="2"
-                            Content="↻"
-                            Command="{Binding RefreshGptModelsCommand}"
-                            ToolTip.Tip="OpenAI에서 최신 모델 목록 가져오기"
-                            Padding="8,0" FontSize="15"
-                            CornerRadius="6"
-                            IsEnabled="{Binding IsNotFetchingModels}"/>
-                  </Grid>
-                  <TextBlock Text="{Binding GptRefreshStatus}"
-                             FontSize="11" Margin="0,4,0,0"
-                             Foreground="{Binding GptRefreshStatusBrush}"
-                             IsVisible="{Binding GptRefreshStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
-                </StackPanel>
-                <Grid ColumnDefinitions="*,12,*">
-                  <StackPanel Grid.Column="0" Spacing="3">
-                    <TextBlock Text="분석 봉 개수" FontSize="10"
-                               Foreground="{DynamicResource TextSecondary}"
-                               ToolTip.Tip="GPT에게 전달할 최근 캔들 개수&#10;많을수록 더 많은 시장 흐름을 분석하지만 API 비용 증가"/>
-                    <NumericUpDown Value="{Binding GptCandleCount}"
-                                   Minimum="5" Maximum="100" Increment="5"
-                                   FormatString="F0" FontSize="12"
-                                   ToolTip.Tip="GPT에게 전달할 최근 캔들 개수&#10;많을수록 더 많은 시장 흐름을 분석하지만 API 비용 증가"/>
-                    <TextBlock Text="GPT에게 보낼 캔들 데이터 수 (많을수록 분석 정확↑, 비용↑)"
-                               FontSize="9" Foreground="{DynamicResource TextSecondary}"
-                               Opacity="0.7" TextWrapping="Wrap"/>
+                <!-- 헤더 + GPT 사용 여부 체크박스 -->
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                  <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="🤖" FontSize="14" VerticalAlignment="Center"/>
+                    <TextBlock Text="GPT API" FontSize="13" FontWeight="Bold"
+                               Foreground="{DynamicResource AccentColor}"
+                               VerticalAlignment="Center"/>
                   </StackPanel>
-                  <StackPanel Grid.Column="2" Spacing="3">
-                    <TextBlock Text="신뢰도 임계값 (%)" FontSize="10"
-                               Foreground="{DynamicResource TextSecondary}"
-                               ToolTip.Tip="GPT 분석 신뢰도가 이 수치 이상일 때만 매매 진입&#10;예) 60% → GPT가 60% 미만으로 확신하면 진입하지 않음"/>
-                    <NumericUpDown Value="{Binding GptConfidenceThreshold}"
-                                   Minimum="50" Maximum="100" Increment="5"
-                                   FormatString="F0" FontSize="12"
-                                   ToolTip.Tip="GPT 분석 신뢰도가 이 수치 이상일 때만 매매 진입&#10;예) 60% → GPT가 60% 미만으로 확신하면 진입하지 않음"/>
-                    <TextBlock Text="GPT 확신도가 이 값 이상일 때만 매매 실행"
-                               FontSize="9" Foreground="{DynamicResource TextSecondary}"
-                               Opacity="0.7" TextWrapping="Wrap"/>
-                  </StackPanel>
+                  <CheckBox Grid.Column="2"
+                            IsChecked="{Binding UseGpt}"
+                            Content="GPT 사용"
+                            FontSize="12" FontWeight="SemiBold"
+                            VerticalAlignment="Center"
+                            ToolTip.Tip="체크: GPT AI가 캔들 분석 후 방향 결정&#10;미체크: 봇 시작가 기준 다음 캔들 가격 방향으로 자동 결정"/>
                 </Grid>
+                <Rectangle Height="1" Fill="{DynamicResource SeparatorColor}"/>
+
+                <!-- GPT 미사용 안내 -->
+                <Border Background="#1A2979FF" CornerRadius="6" Padding="10,8"
+                        IsVisible="{Binding !UseGpt}">
+                  <TextBlock FontSize="11" TextWrapping="Wrap"
+                             Foreground="{DynamicResource TextSecondary}"
+                             Text="📊 GPT 미사용 — 봇 시작 시점의 가격을 기준으로 다음 캔들의 방향(상승/하락)을 감지하여 자동 진입합니다. 모의/실거래 모두 동일 적용."/>
+                </Border>
+
+                <!-- GPT 세부 설정 (UseGpt=true 일 때만 활성화) -->
+                <StackPanel Spacing="11" IsEnabled="{Binding GptSettingsEnabled}">
+
+                  <StackPanel Spacing="3">
+                    <TextBlock Text="API Key" FontSize="10"
+                               Foreground="{DynamicResource TextSecondary}"/>
+                    <TextBox Text="{Binding GptApiKey}" PasswordChar="•" FontSize="12"/>
+                  </StackPanel>
+
+                  <StackPanel Spacing="3">
+                    <TextBlock Text="모델" FontSize="10"
+                               Foreground="{DynamicResource TextSecondary}"/>
+                    <Grid ColumnDefinitions="*,6,Auto">
+                      <ComboBox Grid.Column="0"
+                                ItemsSource="{Binding GptModelOptions}"
+                                SelectedItem="{Binding SelectedGptModelInfo}"
+                                HorizontalAlignment="Stretch" FontSize="12"
+                                Foreground="{DynamicResource TextPrimary}">
+                        <ComboBox.ItemTemplate>
+                          <DataTemplate>
+                            <Grid ColumnDefinitions="*,6,Auto" Margin="2,3">
+                              <StackPanel Grid.Column="0">
+                                <TextBlock Text="{Binding Id}"
+                                           FontSize="12" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimary}"/>
+                                <TextBlock Text="{Binding Description}"
+                                           FontSize="10"
+                                           Foreground="{DynamicResource TextSecondary}"
+                                           Margin="0,1,0,0"/>
+                              </StackPanel>
+                              <Border Grid.Column="2"
+                                      Background="{Binding BadgeColor}"
+                                      CornerRadius="4" Padding="5,2"
+                                      VerticalAlignment="Center"
+                                      IsVisible="{Binding Badge, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                                <TextBlock Text="{Binding Badge}"
+                                           FontSize="10" FontWeight="Bold"
+                                           Foreground="White"/>
+                              </Border>
+                            </Grid>
+                          </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                      </ComboBox>
+                      <Button Grid.Column="2"
+                              Content="↻"
+                              Command="{Binding RefreshGptModelsCommand}"
+                              ToolTip.Tip="OpenAI에서 최신 모델 목록 가져오기"
+                              Padding="8,0" FontSize="15"
+                              CornerRadius="6"
+                              IsEnabled="{Binding IsNotFetchingModels}"/>
+                    </Grid>
+                    <TextBlock Text="{Binding GptRefreshStatus}"
+                               FontSize="11" Margin="0,4,0,0"
+                               Foreground="{Binding GptRefreshStatusBrush}"
+                               IsVisible="{Binding GptRefreshStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                  </StackPanel>
+
+                  <!-- 분석 간격 / 봉 개수 / 신뢰도 -->
+                  <Grid ColumnDefinitions="*,12,*,12,*">
+                    <StackPanel Grid.Column="0" Spacing="3">
+                      <TextBlock Text="분석 간격 (분)" FontSize="10"
+                                 Foreground="{DynamicResource TextSecondary}"
+                                 ToolTip.Tip="GPT 분석을 몇 분마다 실행할지 설정&#10;기본 5분 — API 비용 절감 + 충분한 시장 반영"/>
+                      <NumericUpDown Value="{Binding GptAnalysisInterval}"
+                                     Minimum="1" Maximum="60" Increment="1"
+                                     FormatString="F0" FontSize="12"
+                                     ToolTip.Tip="GPT 분석을 몇 분마다 실행할지 설정&#10;기본 5분 — API 비용 절감 + 충분한 시장 반영"/>
+                      <TextBlock Text="신뢰도 부족 시 이 간격 후 재시도"
+                                 FontSize="9" Foreground="{DynamicResource TextSecondary}"
+                                 Opacity="0.7" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Spacing="3">
+                      <TextBlock Text="분석 봉 개수" FontSize="10"
+                                 Foreground="{DynamicResource TextSecondary}"
+                                 ToolTip.Tip="GPT에게 전달할 최근 캔들 개수&#10;많을수록 더 많은 시장 흐름을 분석하지만 API 비용 증가"/>
+                      <NumericUpDown Value="{Binding GptCandleCount}"
+                                     Minimum="5" Maximum="100" Increment="5"
+                                     FormatString="F0" FontSize="12"
+                                     ToolTip.Tip="GPT에게 전달할 최근 캔들 개수&#10;많을수록 더 많은 시장 흐름을 분석하지만 API 비용 증가"/>
+                      <TextBlock Text="많을수록 분석 정확↑, 비용↑"
+                                 FontSize="9" Foreground="{DynamicResource TextSecondary}"
+                                 Opacity="0.7" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="4" Spacing="3">
+                      <TextBlock Text="신뢰도 임계값 (%)" FontSize="10"
+                                 Foreground="{DynamicResource TextSecondary}"
+                                 ToolTip.Tip="GPT 신뢰도가 이 값 이상일 때만 진입&#10;미만이면 스킵 후 분석 간격 후 재시도"/>
+                      <NumericUpDown Value="{Binding GptConfidenceThreshold}"
+                                     Minimum="50" Maximum="100" Increment="5"
+                                     FormatString="F0" FontSize="12"
+                                     ToolTip.Tip="GPT 신뢰도가 이 값 이상일 때만 진입&#10;미만이면 스킵 후 분석 간격 후 재시도"/>
+                      <TextBlock Text="미달 시 스킵 → 간격 후 재분석"
+                                 FontSize="9" Foreground="{DynamicResource TextSecondary}"
+                                 Opacity="0.7" TextWrapping="Wrap"/>
+                    </StackPanel>
+                  </Grid>
+
+                </StackPanel>
               </StackPanel>
             </Border>
 

@@ -1,0 +1,60 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="OKXTradingBot.UI.Views.MockStartConfirmDialog"
+        Title="매매 모드 확인"
+        Width="400" Height="220"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        SystemDecorations="BorderOnly"
+        Background="#1E1E2E">
+
+  <Border Padding="24" CornerRadius="10"
+          Background="#1E1E2E"
+          BorderBrush="#3A3A5C" BorderThickness="1">
+    <StackPanel Spacing="16">
+
+      <!-- 아이콘 + 제목 -->
+      <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
+        <TextBlock Text="🧪" FontSize="26" VerticalAlignment="Center"/>
+        <TextBlock Text="모의거래 모드로 시작합니다"
+                   FontSize="15" FontWeight="Bold"
+                   Foreground="#FF9800"
+                   VerticalAlignment="Center"/>
+      </StackPanel>
+
+      <!-- 본문 -->
+      <Border Background="#2A2A3E" CornerRadius="6" Padding="14,10">
+        <TextBlock TextWrapping="Wrap" FontSize="13" Foreground="#CCCCDD"
+                   LineHeight="20">
+          현재 <Run FontWeight="Bold" Foreground="#FF9800">모의거래</Run> 모드입니다.
+          실제 주문은 체결되지 않습니다.
+
+          실거래를 원하신다면 오른쪽 상단의&#10;
+          <Run FontWeight="Bold" Foreground="#4CAF50">🧪 모의거래</Run> 버튼을 눌러
+          <Run FontWeight="Bold" Foreground="#4CAF50">💹 실거래</Run>로 전환 후 시작하세요.
+        </TextBlock>
+      </Border>
+
+      <!-- 버튼 -->
+      <Grid ColumnDefinitions="*,8,*" Margin="0,4,0,0">
+        <Button Grid.Column="0"
+                Content="모의거래로 시작"
+                Click="OnConfirm"
+                Background="#FF9800" Foreground="White"
+                FontWeight="Bold" FontSize="13"
+                Padding="0,10" CornerRadius="6"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"/>
+        <Button Grid.Column="2"
+                Content="취소"
+                Click="OnCancel"
+                Background="#3A3A5C" Foreground="#AAAACC"
+                FontSize="13"
+                Padding="0,10" CornerRadius="6"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"/>
+      </Grid>
+
+    </StackPanel>
+  </Border>
+</Window>

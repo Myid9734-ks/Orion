@@ -4,43 +4,154 @@ using OKXTradingBot.Core.Models;
 namespace OKXTradingBot.Infrastructure.Backtest;
 
 /// <summary>
-/// IOrderExecutor 구현 — 가상 주문 처리 (백테스트용)
-/// 실제 API 호출 없이 내부 계산만 수행
+/// IOrderExecutor 구현 — 가상매매(Paper Trading)
+/// 실시간 시장 데이터 + 가상 주문 처리.
+/// IDataProvider에서 현재가를 가져와 실제와 동일한 체결가 시뮬레이션.
+/// 잔고는 가상으로 관리하며, 실거래 전환 시 OkxOrderExecutor로 교체하면 끝.
 /// </summary>
 public class VirtualOrderExecutor : IOrderExecutor
 {
+    private readonly IDataProvider _dataProvider;
     private decimal _virtualBalance;
+    private decimal _initialBalance;
 
-    public VirtualOrderExecutor(decimal initialBalance = 1000m)
+    // 현재 열린 포지션 추적 (가상 잔고 반영용)
+    private decimal _openPositionAmount  = 0;
+    private decimal _openPositionEntry   = 0;
+    private TradeDirection _openDirection = TradeDirection.Long;
+    private int _leverage = 10;
+
+    public VirtualOrderExecutor(IDataProvider dataProvider, decimal initialBalance = 1000m)
     {
+        _dataProvider   = dataProvider;
         _virtualBalance = initialBalance;
+        _initialBalance = initialBalance;
     }
 
-    public Task<OrderResult> PlaceOrderAsync(OrderRequest request)
+    /// <summary>현재 가상 잔고</summary>
+    public decimal VirtualBalance => _virtualBalance;
+
+    public async Task<OrderResult> PlaceOrderAsync(OrderRequest request)
     {
-        // 가상 주문: 항상 성공, 즉시 체결
-        var result = new OrderResult
+        // 실시간 현재가로 체결
+        decimal filledPrice;
+        try
+        {
+            filledPrice = await _dataProvider.GetCurrentPriceAsync();
+        }
+        catch
+        {
+            filledPrice = 0; // fallback — TradingCore에서 candle.Close 사용
+        }
+
+        // 가상 잔고에서 투입금 차감 (레버리지 적용 전 원금 기준)
+        var margin = request.Amount / _leverage; // 실제 필요 증거금
+        if (_virtualBalance < margin)
+        {
+            return new OrderResult
+            {
+                Success      = false,
+                ErrorMessage = $"잔고 부족: 필요 {margin:F2} USDT, 보유 {_virtualBalance:F2} USDT"
+            };
+        }
+
+        _virtualBalance -= margin;
+        _openPositionAmount += request.Amount;
+        if (_openPositionEntry == 0)
+        {
+            _openPositionEntry = filledPrice;
+            _openDirection     = request.Direction;
+        }
+        else
+        {
+            // 가중 평균 — TradingCore에서도 계산하지만, 여기서도 추적
+            _openPositionEntry = ((_openPositionAmount - request.Amount) * _openPositionEntry
+                                  + request.Amount * filledPrice)
+                                 / _openPositionAmount;
+        }
+
+        return new OrderResult
         {
             Success      = true,
             OrderId      = $"VIRTUAL-{Guid.NewGuid():N}",
-            FilledPrice  = 0, // TradingCore에서 현재가 직접 사용
-            FilledAmount = request.Amount
+            FilledPrice  = filledPrice,
+            FilledAmount = request.Amount,
+            Timestamp    = DateTime.UtcNow
         };
-        return Task.FromResult(result);
     }
 
-    public Task<OrderResult> ClosePositionAsync(string symbol, TradeDirection direction)
+    public async Task<OrderResult> ClosePositionAsync(string symbol, TradeDirection direction)
     {
-        return Task.FromResult(new OrderResult
+        decimal exitPrice;
+        try
         {
-            Success = true,
-            OrderId = $"VIRTUAL-CLOSE-{Guid.NewGuid():N}"
-        });
+            exitPrice = await _dataProvider.GetCurrentPriceAsync();
+        }
+        catch
+        {
+            exitPrice = _openPositionEntry; // fallback
+        }
+
+        // PnL 계산 후 잔고 반영
+        if (_openPositionAmount > 0 && _openPositionEntry > 0)
+        {
+            var pnlPct = _openDirection == TradeDirection.Long
+                ? (exitPrice - _openPositionEntry) / _openPositionEntry
+                : (_openPositionEntry - exitPrice) / _openPositionEntry;
+
+            var totalMargin = _openPositionAmount / _leverage;
+            var pnlAmount   = totalMargin * _leverage * pnlPct; // 레버리지 적용 PnL
+
+            _virtualBalance += totalMargin + pnlAmount; // 증거금 + 손익 반환
+        }
+
+        // 포지션 초기화
+        _openPositionAmount = 0;
+        _openPositionEntry  = 0;
+
+        return new OrderResult
+        {
+            Success     = true,
+            OrderId     = $"VIRTUAL-CLOSE-{Guid.NewGuid():N}",
+            FilledPrice = exitPrice,
+            Timestamp   = DateTime.UtcNow
+        };
     }
 
     public Task<bool> SetLeverageAsync(string symbol, int leverage, string marginMode)
-        => Task.FromResult(true);
+    {
+        _leverage = leverage;
+        return Task.FromResult(true);
+    }
 
     public Task<decimal> GetBalanceAsync()
         => Task.FromResult(_virtualBalance);
+
+    // ── 서버 사이드 예약 주문 미지원 (모의거래는 캔들 폴링 방식 유지) ──
+    public bool SupportsServerSidePreOrders => false;
+
+    public event EventHandler<AlgoOrderFillEvent>? OnAlgoOrderFilled
+    {
+        add    { /* no-op */ }
+        remove { /* no-op */ }
+    }
+
+    public Task<OrderResult> PlaceTriggerOrderAsync(TriggerOrderRequest request)
+        => Task.FromResult(new OrderResult { Success = false, ErrorMessage = "Virtual: trigger 미지원" });
+
+    public Task<OrderResult> PlaceTakeProfitOrderAsync(
+        string symbol, TradeDirection direction, decimal triggerPrice, string marginMode)
+        => Task.FromResult(new OrderResult { Success = false, ErrorMessage = "Virtual: TP algo 미지원" });
+
+    public Task<bool> CancelAlgoOrderAsync(string symbol, string algoId) => Task.FromResult(true);
+    public Task<bool> CancelAllAlgoOrdersAsync(string symbol) => Task.FromResult(true);
+    public Task StartPrivateStreamAsync(CancellationToken ct) => Task.CompletedTask;
+    public Task StopPrivateStreamAsync() => Task.CompletedTask;
+
+    // 가상매매는 재시작 동기화 불필요
+    public Task<ExchangePositionInfo?> GetPositionAsync(string symbol)
+        => Task.FromResult<ExchangePositionInfo?>(null);
+
+    public Task<List<AlgoOrderInfo>> GetOpenAlgoOrdersAsync(string symbol)
+        => Task.FromResult(new List<AlgoOrderInfo>());
 }

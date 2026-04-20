@@ -40,4 +40,21 @@ public class Position
             ? LastEntryPrice * (1 - martinGapPercent / 100)
             : LastEntryPrice * (1 + martinGapPercent / 100);
     }
+
+    // ── 실시간 상태 (UI 바인딩용) ─────────────────────
+
+    /// <summary>현재 미실현 손익률 (%)</summary>
+    public decimal CurrentPnlPercent { get; set; }
+
+    /// <summary>현재 미실현 손익 금액 (USDT)</summary>
+    public decimal CurrentPnlAmount { get; set; }
+
+    /// <summary>
+    /// 현재가 기준 미실현 PnL 업데이트 (TradingCore에서 매 캔들마다 호출)
+    /// </summary>
+    public void UpdateUnrealizedPnl(decimal currentPrice, int leverage)
+    {
+        CurrentPnlPercent = GetUnrealizedPnlPercent(currentPrice);
+        CurrentPnlAmount  = TotalAmount * CurrentPnlPercent / 100 * leverage;
+    }
 }

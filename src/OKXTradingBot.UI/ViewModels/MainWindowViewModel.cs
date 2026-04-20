@@ -5,6 +5,7 @@ using Avalonia.Media;
 using Avalonia.Styling;
 using Microsoft.Extensions.Logging.Abstractions;
 using OKXTradingBot.Infrastructure.OKX;
+using OKXTradingBot.Infrastructure.Persistence;
 using OKXTradingBot.UI.Services;
 using ReactiveUI;
 
@@ -28,7 +29,7 @@ public class MainWindowViewModel : ReactiveObject
 
     // ── 전역 설정 필드 ────────────────────────────────────────────────
     private bool   _isDarkMode     = true;
-    private bool   _isBacktestMode = false;
+    private bool   _isBacktestMode = true; // 기본값: 모의거래
     private string _apiKey         = "";
     private string _apiSecret      = "";
     private string _passphrase     = "";
@@ -36,6 +37,8 @@ public class MainWindowViewModel : ReactiveObject
     private string _gptModel       = "gpt-5.4-mini";
     private int    _gptCandleCount         = 30;
     private int    _gptConfidenceThreshold = 60;
+    private bool   _useGpt                 = false;
+    private int    _gptAnalysisInterval    = 5;
     private string _telegramBotToken = "";
     private string _telegramChatId   = "";
     private bool   _telegramEnabled  = false;
@@ -52,6 +55,119 @@ public class MainWindowViewModel : ReactiveObject
 
     // ── 심볼 탭 ──────────────────────────────────────────────────────
     public ObservableCollection<SymbolTabViewModel> SymbolTabs { get; } = new();
+
+    // ── 수익률 탭 필터 ────────────────────────────────────────────────
+    private static readonly IBrush _activePeriodBg = new SolidColorBrush(Color.Parse("#2979FF"));
+    private static readonly IBrush _activePeriodFg = Brushes.White;
+
+    public ObservableCollection<string> PnlSymbolOptions { get; } = new() { "전체" };
+
+    private string _selectedPnlSymbol = "전체";
+    public string SelectedPnlSymbol
+    {
+        get => _selectedPnlSymbol;
+        set { this.RaiseAndSetIfChanged(ref _selectedPnlSymbol, value); RefreshFilteredPnl(); }
+    }
+
+    private string _selectedPnlPeriod = "전체";
+    public string SelectedPnlPeriod
+    {
+        get => _selectedPnlPeriod;
+        set { this.RaiseAndSetIfChanged(ref _selectedPnlPeriod, value); RefreshFilteredPnl(); NotifyPeriodBrushes(); }
+    }
+
+    public ReactiveCommand<string, Unit> SetPnlPeriodCommand { get; private set; } = null!;
+
+    public ObservableCollection<TradeRecord> FilteredTradeHistory { get; } = new();
+
+    private decimal _filteredTotalPnl;
+    private int     _filteredWinCount;
+    private int     _filteredLossCount;
+
+    public string FilteredTotalPnlText  => $"{_filteredTotalPnl:+0.00;-0.00;0.00} USDT";
+    public IBrush FilteredTotalPnlBrush => _filteredTotalPnl > 0 ? Brushes.LightGreen
+                                         : _filteredTotalPnl < 0 ? Brushes.Tomato : Brushes.Gray;
+    public string FilteredTradeCountText => $"{_filteredWinCount + _filteredLossCount}회";
+    public string FilteredWinRateText    => (_filteredWinCount + _filteredLossCount) > 0
+        ? $"{(double)_filteredWinCount / (_filteredWinCount + _filteredLossCount) * 100:F1}%" : "-";
+    public string FilteredAvgPnlText     => (_filteredWinCount + _filteredLossCount) > 0
+        ? $"{_filteredTotalPnl / (_filteredWinCount + _filteredLossCount):+0.00;-0.00} USDT" : "-";
+
+    public IBrush PnlPeriodAllBg    => _selectedPnlPeriod == "전체" ? _activePeriodBg : Brushes.Transparent;
+    public IBrush PnlPeriodDailyBg  => _selectedPnlPeriod == "일간" ? _activePeriodBg : Brushes.Transparent;
+    public IBrush PnlPeriodWeeklyBg => _selectedPnlPeriod == "주간" ? _activePeriodBg : Brushes.Transparent;
+    public IBrush PnlPeriodMonthlyBg=> _selectedPnlPeriod == "월간" ? _activePeriodBg : Brushes.Transparent;
+    public IBrush PnlPeriodYearlyBg => _selectedPnlPeriod == "연간" ? _activePeriodBg : Brushes.Transparent;
+    public IBrush PnlPeriodAllFg    => _selectedPnlPeriod == "전체" ? _activePeriodFg : Brushes.Gray;
+    public IBrush PnlPeriodDailyFg  => _selectedPnlPeriod == "일간" ? _activePeriodFg : Brushes.Gray;
+    public IBrush PnlPeriodWeeklyFg => _selectedPnlPeriod == "주간" ? _activePeriodFg : Brushes.Gray;
+    public IBrush PnlPeriodMonthlyFg=> _selectedPnlPeriod == "월간" ? _activePeriodFg : Brushes.Gray;
+    public IBrush PnlPeriodYearlyFg => _selectedPnlPeriod == "연간" ? _activePeriodFg : Brushes.Gray;
+
+    private void NotifyPeriodBrushes()
+    {
+        this.RaisePropertyChanged(nameof(PnlPeriodAllBg));
+        this.RaisePropertyChanged(nameof(PnlPeriodDailyBg));
+        this.RaisePropertyChanged(nameof(PnlPeriodWeeklyBg));
+        this.RaisePropertyChanged(nameof(PnlPeriodMonthlyBg));
+        this.RaisePropertyChanged(nameof(PnlPeriodYearlyBg));
+        this.RaisePropertyChanged(nameof(PnlPeriodAllFg));
+        this.RaisePropertyChanged(nameof(PnlPeriodDailyFg));
+        this.RaisePropertyChanged(nameof(PnlPeriodWeeklyFg));
+        this.RaisePropertyChanged(nameof(PnlPeriodMonthlyFg));
+        this.RaisePropertyChanged(nameof(PnlPeriodYearlyFg));
+    }
+
+    private void OnAnyTradeHistoryChanged()
+    {
+        var symbols = SymbolTabs
+            .SelectMany(t => t.TradeHistory)
+            .Select(r => r.Symbol)
+            .Distinct()
+            .OrderBy(s => s)
+            .ToList();
+
+        foreach (var s in symbols.Where(s => !PnlSymbolOptions.Contains(s)))
+            PnlSymbolOptions.Add(s);
+
+        if (_selectedPnlSymbol != "전체" && !symbols.Contains(_selectedPnlSymbol))
+            SelectedPnlSymbol = "전체";
+        else
+            RefreshFilteredPnl();
+    }
+
+    private void RefreshFilteredPnl()
+    {
+        var cutoff = _selectedPnlPeriod switch
+        {
+            "일간" => DateTime.Today,
+            "주간" => DateTime.Today.AddDays(-7),
+            "월간" => DateTime.Today.AddMonths(-1),
+            "연간" => DateTime.Today.AddYears(-1),
+            _     => DateTime.MinValue
+        };
+
+        var records = SymbolTabs
+            .SelectMany(t => t.TradeHistory)
+            .Where(r => _selectedPnlSymbol == "전체" || r.Symbol == _selectedPnlSymbol)
+            .Where(r => r.ClosedAt >= cutoff)
+            .OrderByDescending(r => r.ClosedAt)
+            .ToList();
+
+        FilteredTradeHistory.Clear();
+        int seq = 1;
+        foreach (var r in records) { r.Number = seq++; FilteredTradeHistory.Add(r); }
+
+        _filteredTotalPnl  = records.Sum(r => r.PnlAmount);
+        _filteredWinCount  = records.Count(r => r.PnlAmount > 0);
+        _filteredLossCount = records.Count(r => r.PnlAmount <= 0);
+
+        this.RaisePropertyChanged(nameof(FilteredTotalPnlText));
+        this.RaisePropertyChanged(nameof(FilteredTotalPnlBrush));
+        this.RaisePropertyChanged(nameof(FilteredTradeCountText));
+        this.RaisePropertyChanged(nameof(FilteredWinRateText));
+        this.RaisePropertyChanged(nameof(FilteredAvgPnlText));
+    }
 
     private SymbolTabViewModel? _selectedSymbolTab;
     public SymbolTabViewModel? SelectedSymbolTab
@@ -80,6 +196,7 @@ public class MainWindowViewModel : ReactiveObject
     public ReactiveCommand<Unit, Unit>   RefreshGptModelsCommand  { get; }
     public ReactiveCommand<Unit, Unit>   FetchBalanceCommand      { get; }
     public ReactiveCommand<Unit, Unit>   RefreshSymbolsCommand    { get; }
+    public ReactiveCommand<Unit, Unit>   ClearDataCommand         { get; }
 
     // ── Unsaved ───────────────────────────────────────────────────────
     private bool _hasUnsavedChanges;
@@ -93,6 +210,9 @@ public class MainWindowViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(SaveButtonBorderBrush));
         }
     }
+
+    /// <summary>전역 설정(설정 탭)에만 변경사항이 있는지 여부 — 심볼 탭 변경은 포함하지 않음</summary>
+    public bool HasGlobalUnsavedChanges => _globalHasChanges;
     public string SaveButtonText     => HasUnsavedChanges ? "  💾  설정 저장  ●" : "  💾  설정 저장  ";
     public IBrush SaveButtonBorderBrush => HasUnsavedChanges
         ? new SolidColorBrush(Color.Parse("#E91E63"))
@@ -230,6 +350,8 @@ public class MainWindowViewModel : ReactiveObject
         RefreshGptModelsCommand  = ReactiveCommand.CreateFromTask(RefreshGptModelsAsync);
         RefreshSymbolsCommand    = ReactiveCommand.CreateFromTask(RefreshSymbolsAsync);
         FetchBalanceCommand      = ReactiveCommand.CreateFromTask(FetchBalanceAsync);
+        SetPnlPeriodCommand      = ReactiveCommand.Create<string>(p => SelectedPnlPeriod = p);
+        ClearDataCommand         = ReactiveCommand.Create(ClearData);
 
         SaveSettingsCommand.ThrownExceptions.Subscribe(ex     => { });
         RefreshGptModelsCommand.ThrownExceptions.Subscribe(ex => { });
@@ -253,7 +375,8 @@ public class MainWindowViewModel : ReactiveObject
     {
         var usedSymbols = SymbolTabs.Select(t => t.Symbol).ToHashSet();
         return SymbolOptions.FirstOrDefault(s => !usedSymbols.Contains(s))
-               ?? "BTC-USDT-SWAP";
+               ?? SymbolOptions.FirstOrDefault()
+               ?? "";
     }
 
     private void AddSymbolTab(SymbolTabSettings? settings = null)
@@ -267,11 +390,12 @@ public class MainWindowViewModel : ReactiveObject
             settings = new SymbolTabSettings { Symbol = unusedSymbol };
         }
 
-        var tab = new SymbolTabViewModel(
+        SymbolTabViewModel? tab = null;
+        tab = new SymbolTabViewModel(
             symbolOptions: SymbolOptions,
             onChanged: OnTabChanged,
             getGlobalConfig: BuildGlobalConfig,
-            isSymbolInUse: sym => IsSymbolInUseByOtherTab(sym),
+            isSymbolInUse: sym => IsSymbolInUseByOtherTab(sym, tab),
             initialSettings: settings);
 
         // 선택된 탭의 심볼/가격 변화를 헤더에 반영
@@ -284,8 +408,15 @@ public class MainWindowViewModel : ReactiveObject
                 this.RaisePropertyChanged(nameof(HeaderPrice));
             }
             if (e.PropertyName == nameof(SymbolTabViewModel.IsRunning))
+            {
                 this.RaisePropertyChanged(nameof(IsAnyRunning));
+                if (tab.IsRunning && CanAddTab)
+                    AddSymbolTab();
+            }
         };
+
+        // 수익률 탭: TradeHistory 변경 감지
+        tab.TradeHistory.CollectionChanged += (_, _) => OnAnyTradeHistoryChanged();
 
         SymbolTabs.Add(tab);
         SelectedSymbolTab = tab;
@@ -321,6 +452,7 @@ public class MainWindowViewModel : ReactiveObject
 
     private void OnTabChanged()
     {
+        this.RaisePropertyChanged(nameof(HasGlobalUnsavedChanges));
         var changed = _globalHasChanges || SymbolTabs.Any(t => t.HasUnsavedChanges);
         if (HasUnsavedChanges == changed) return;
         HasUnsavedChanges = changed;
@@ -372,6 +504,27 @@ public class MainWindowViewModel : ReactiveObject
         get => _gptConfidenceThreshold;
         set { this.RaiseAndSetIfChanged(ref _gptConfidenceThreshold, value); MarkUnsaved(); }
     }
+
+    public bool UseGpt
+    {
+        get => _useGpt;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _useGpt, value);
+            this.RaisePropertyChanged(nameof(GptSettingsEnabled));
+            MarkUnsaved();
+        }
+    }
+
+    /// <summary>GPT 미사용 시 세부 설정 비활성화 (UI 바인딩용)</summary>
+    public bool GptSettingsEnabled => _useGpt;
+
+    public int GptAnalysisInterval
+    {
+        get => _gptAnalysisInterval;
+        set { this.RaiseAndSetIfChanged(ref _gptAnalysisInterval, value); MarkUnsaved(); }
+    }
+
     public string TelegramBotToken
     {
         get => _telegramBotToken;
@@ -451,7 +604,7 @@ public class MainWindowViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(TradingModeBrush));
         }
     }
-    public string TradingModeText  => _isBacktestMode ? "📊 백테스트" : "💹 실거래";
+    public string TradingModeText  => _isBacktestMode ? "🧪 모의거래" : "💹 실거래";
     public IBrush TradingModeBrush => _isBacktestMode
         ? new SolidColorBrush(Color.Parse("#FF9800"))
         : new SolidColorBrush(Color.Parse("#4CAF50"));
@@ -509,7 +662,7 @@ public class MainWindowViewModel : ReactiveObject
             var symbols = root.GetProperty("data")
                 .EnumerateArray()
                 .Select(e => e.GetProperty("instId").GetString() ?? "")
-                .Where(s => !string.IsNullOrEmpty(s))
+                .Where(s => s.EndsWith("-USDT-SWAP"))
                 .OrderBy(s => s == "BTC-USDT-SWAP" ? "\0" : s)
                 .ToList();
 
@@ -708,6 +861,8 @@ public class MainWindowViewModel : ReactiveObject
             GptModel               = GptModel,
             GptCandleCount         = GptCandleCount,
             GptConfidenceThreshold = GptConfidenceThreshold,
+            UseGpt                 = UseGpt,
+            GptAnalysisInterval    = GptAnalysisInterval,
             TelegramBotToken       = TelegramBotToken,
             TelegramChatId         = TelegramChatId,
             TelegramEnabled        = TelegramEnabled,
@@ -806,8 +961,20 @@ public class MainWindowViewModel : ReactiveObject
         GptModel               = GptModel,
         GptCandleCount         = GptCandleCount,
         GptConfidenceThreshold = GptConfidenceThreshold,
+        UseGpt                 = UseGpt,
+        GptAnalysisInterval    = GptAnalysisInterval,
         TelegramBotToken       = TelegramBotToken,
         TelegramChatId         = TelegramChatId,
+        TelegramEnabled        = TelegramEnabled,
+        NotifyBotStartStop     = NotifyBotStartStop,
+        NotifyEntry            = NotifyEntry,
+        NotifyMartin           = NotifyMartin,
+        NotifyTakeProfit       = NotifyTakeProfit,
+        NotifyStopLoss         = NotifyStopLoss,
+        NotifyError            = NotifyError,
+        QuietHoursEnabled      = QuietHoursEnabled,
+        QuietStart             = QuietStart,
+        QuietEnd               = QuietEnd,
         IsBacktestMode         = IsBacktestMode,
     };
 
@@ -840,6 +1007,8 @@ public class MainWindowViewModel : ReactiveObject
         _gptModel              = s.GptModel;
         _gptCandleCount        = s.GptCandleCount;
         _gptConfidenceThreshold = s.GptConfidenceThreshold;
+        _useGpt                = s.UseGpt;
+        _gptAnalysisInterval   = s.GptAnalysisInterval;
         _telegramBotToken      = s.TelegramBotToken;
         _telegramChatId        = s.TelegramChatId;
         _telegramEnabled       = s.TelegramEnabled;
@@ -862,6 +1031,9 @@ public class MainWindowViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(GptModel));
         this.RaisePropertyChanged(nameof(GptCandleCount));
         this.RaisePropertyChanged(nameof(GptConfidenceThreshold));
+        this.RaisePropertyChanged(nameof(UseGpt));
+        this.RaisePropertyChanged(nameof(GptSettingsEnabled));
+        this.RaisePropertyChanged(nameof(GptAnalysisInterval));
         this.RaisePropertyChanged(nameof(TelegramBotToken));
         this.RaisePropertyChanged(nameof(TelegramChatId));
         this.RaisePropertyChanged(nameof(TelegramEnabled));
@@ -893,6 +1065,8 @@ public class MainWindowViewModel : ReactiveObject
         GptModel               = GptModel,
         GptCandleCount         = GptCandleCount,
         GptConfidenceThreshold = GptConfidenceThreshold,
+        UseGpt                 = UseGpt,
+        GptAnalysisInterval    = GptAnalysisInterval,
         TelegramBotToken       = TelegramBotToken,
         TelegramChatId         = TelegramChatId,
         TelegramEnabled        = TelegramEnabled,
@@ -914,6 +1088,36 @@ public class MainWindowViewModel : ReactiveObject
         OnTabChanged();
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // 데이터 초기화
+    // ═══════════════════════════════════════════════════════════════════
+
+    public void ClearData()
+    {
+        // DB 전체 삭제
+        new TradeHistoryRepository().DeleteAll();
+
+        // 로그 파일 전체 삭제
+        var logDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".okxtradingbot", "logs");
+        if (Directory.Exists(logDir))
+        {
+            foreach (var f in Directory.GetFiles(logDir, "*.log"))
+                try { File.Delete(f); } catch { }
+        }
+
+        // 각 탭 UI 초기화
+        foreach (var tab in SymbolTabs)
+            tab.ClearHistory();
+
+        // 수익률 탭 초기화
+        PnlSymbolOptions.Clear();
+        PnlSymbolOptions.Add("전체");
+        SelectedPnlSymbol = "전체";
+        RefreshFilteredPnl();
+    }
+
     private bool DiffersFromSnapshot() =>
         ApiKey                 != _savedSnapshot.ApiKey
      || ApiSecret              != _savedSnapshot.ApiSecret
@@ -922,6 +1126,8 @@ public class MainWindowViewModel : ReactiveObject
      || GptModel               != _savedSnapshot.GptModel
      || GptCandleCount         != _savedSnapshot.GptCandleCount
      || GptConfidenceThreshold != _savedSnapshot.GptConfidenceThreshold
+     || UseGpt                 != _savedSnapshot.UseGpt
+     || GptAnalysisInterval    != _savedSnapshot.GptAnalysisInterval
      || TelegramBotToken       != _savedSnapshot.TelegramBotToken
      || TelegramChatId         != _savedSnapshot.TelegramChatId
      || TelegramEnabled        != _savedSnapshot.TelegramEnabled

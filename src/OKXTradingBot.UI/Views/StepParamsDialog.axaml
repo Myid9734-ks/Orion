@@ -2,33 +2,78 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="OKXTradingBot.UI.Views.StepParamsDialog"
         Title="단계별 파라미터 설정"
-        Width="420" MinHeight="200"
-        MaxHeight="600"
+        Width="580" MinHeight="200"
+        MaxHeight="680"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource AppBackground}">
 
-  <Grid RowDefinitions="Auto,*,Auto" Margin="16">
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16">
 
     <!-- 안내 문구 -->
     <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,12">
-      <TextBlock Text="마틴 단계별 진입 간격 / 목표 수익 설정"
+      <TextBlock Text="마틴 단계별 진입 간격 / 금액 배분 설정"
                  FontSize="13" FontWeight="Bold"
                  Foreground="{DynamicResource TextPrimary}"/>
-      <TextBlock Text="목록보다 단계가 많으면 마지막 값이 반복 적용됩니다."
+      <TextBlock Text="배수: 이전 회차 대비 배수 입력 (예: 2 → 이전의 2배). 피보나치: 비율 직접 입력."
                  FontSize="11"
                  Foreground="{DynamicResource TextSecondary}"/>
     </StackPanel>
 
-    <!-- 헤더 + 행 목록 -->
+    <!-- 금액 배분 모드 선택 -->
     <Border Grid.Row="1"
+            Background="{DynamicResource CardBackground}"
+            BorderBrush="{DynamicResource CardBorder}"
+            BorderThickness="1" CornerRadius="6"
+            Padding="10,8" Margin="0,0,0,10">
+      <StackPanel Spacing="6">
+        <TextBlock Text="금액 배분 모드"
+                   FontSize="11" FontWeight="Bold"
+                   Foreground="{DynamicResource TextSecondary}"/>
+        <Grid ColumnDefinitions="*,*,*" Height="32">
+          <Button Grid.Column="0"
+                  Content="균등"
+                  Click="OnModeEqual"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center"
+                  CornerRadius="6,0,0,6"
+                  FontSize="12" FontWeight="Bold"
+                  Padding="0,6"
+                  Name="BtnModeEqual"/>
+          <Button Grid.Column="1"
+                  Content="배수"
+                  Click="OnModeMultiplier"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center"
+                  CornerRadius="0"
+                  FontSize="12" FontWeight="Bold"
+                  Padding="0,6"
+                  Name="BtnModeMultiplier"/>
+          <Button Grid.Column="2"
+                  Content="피보나치"
+                  Click="OnModeFibonacci"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center"
+                  CornerRadius="0,6,6,0"
+                  FontSize="12" FontWeight="Bold"
+                  Padding="0,6"
+                  Name="BtnModeFibonacci"/>
+        </Grid>
+        <TextBlock Name="TotalAmountLabel"
+                   FontSize="11"
+                   Foreground="{DynamicResource TextSecondary}"/>
+      </StackPanel>
+    </Border>
+
+    <!-- 헤더 + 행 목록 -->
+    <Border Grid.Row="2"
             Background="{DynamicResource CardBackground}"
             BorderBrush="{DynamicResource CardBorder}"
             BorderThickness="1" CornerRadius="6"
             Padding="10,8">
       <StackPanel>
-        <!-- 컬럼 헤더 -->
-        <Grid ColumnDefinitions="44,*" Margin="0,0,0,6">
+        <!-- 컬럼 헤더: 회차(40) | 진입간격(160) | 배수/비율(160) | 금액(90) -->
+        <Grid ColumnDefinitions="40,160,160,90" Margin="0,0,0,6">
           <TextBlock Text="회차"
                      FontSize="11" FontWeight="Bold"
                      Foreground="{DynamicResource TextSecondary}"
@@ -37,14 +82,28 @@
                      FontSize="11" FontWeight="Bold"
                      Foreground="{DynamicResource TextSecondary}"
                      HorizontalAlignment="Center"/>
+          <TextBlock Grid.Column="2"
+                     Name="WeightHeader"
+                     FontSize="11" FontWeight="Bold"
+                     Foreground="{DynamicResource TextSecondary}"
+                     HorizontalAlignment="Center"
+                     IsVisible="False"/>
+          <TextBlock Grid.Column="3"
+                     Name="AmountHeader"
+                     Text="금액 (USDT)"
+                     FontSize="11" FontWeight="Bold"
+                     Foreground="{DynamicResource TextSecondary}"
+                     HorizontalAlignment="Center"
+                     IsVisible="False"/>
         </Grid>
 
         <!-- 데이터 행 -->
-        <ScrollViewer MaxHeight="380" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer MaxHeight="340" VerticalScrollBarVisibility="Auto">
           <ItemsControl ItemsSource="{Binding Rows}">
             <ItemsControl.ItemTemplate>
               <DataTemplate>
-                <Grid ColumnDefinitions="44,*" Margin="0,3">
+                <Grid ColumnDefinitions="40,160,160,90" Margin="0,3">
+                  <!-- 단계 번호 -->
                   <Border Background="{DynamicResource AppBackground}"
                           CornerRadius="4"
                           HorizontalAlignment="Center"
@@ -55,12 +114,35 @@
                                Foreground="{DynamicResource AccentColor}"
                                HorizontalAlignment="Center"/>
                   </Border>
+                  <!-- 진입 간격 -->
                   <NumericUpDown Grid.Column="1"
                                  Value="{Binding Gap}"
                                  Minimum="0.1" Maximum="20" Increment="0.1"
                                  FormatString="F2"
                                  FontSize="12" FontWeight="Bold"
                                  Margin="3,0"/>
+                  <!-- 배수/비율 (배수·피보나치 모드에서만 표시) -->
+                  <NumericUpDown Grid.Column="2"
+                                 Value="{Binding Weight}"
+                                 Minimum="0.1" Maximum="9999" Increment="0.5"
+                                 FormatString="F1"
+                                 FontSize="12" FontWeight="Bold"
+                                 Margin="3,0"
+                                 IsVisible="{Binding ShowWeight}"
+                                 IsEnabled="{Binding WeightEditable}"/>
+                  <!-- 계산된 금액 (배수·피보나치에서만 표시, 읽기전용) -->
+                  <Border Grid.Column="3"
+                          Background="{DynamicResource AppBackground}"
+                          CornerRadius="4"
+                          VerticalAlignment="Center"
+                          Margin="3,0"
+                          Padding="8,5"
+                          IsVisible="{Binding ShowWeight}">
+                    <TextBlock Text="{Binding AmountDisplay}"
+                               FontSize="12" FontWeight="Bold"
+                               Foreground="{DynamicResource TextPrimary}"
+                               HorizontalAlignment="Center"/>
+                  </Border>
                 </Grid>
               </DataTemplate>
             </ItemsControl.ItemTemplate>
@@ -70,7 +152,7 @@
     </Border>
 
     <!-- 하단 버튼 -->
-    <Grid Grid.Row="2" ColumnDefinitions="*,8,Auto,8,Auto" Margin="0,12,0,0">
+    <Grid Grid.Row="3" ColumnDefinitions="*,8,Auto,8,Auto" Margin="0,12,0,0">
       <Button Grid.Column="0"
               Content="균등값으로 초기화"
               Click="OnReset"

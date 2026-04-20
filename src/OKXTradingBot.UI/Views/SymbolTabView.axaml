@@ -106,15 +106,18 @@
           <Border Background="{DynamicResource AppBackground}"
                   BorderBrush="{DynamicResource CardBorder}"
                   BorderThickness="1" CornerRadius="6" Padding="10">
-            <StackPanel Spacing="7">
+            <StackPanel Spacing="7" IsEnabled="{Binding IsNotRunning}">
               <!-- 심볼 -->
               <Grid ColumnDefinitions="Auto,*">
                 <TextBlock Text="심볼" MinWidth="75" FontSize="11"
                            Foreground="{DynamicResource TextSecondary}"
                            VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <ComboBox Grid.Column="1"
-                          ItemsSource="{Binding SymbolOptions}"
+                <ComboBox x:Name="SymbolComboBox"
+                          Grid.Column="1"
+                          ItemsSource="{Binding FilteredSymbolOptions}"
                           SelectedItem="{Binding Symbol}"
+                          IsEnabled="{Binding IsNotRunning}"
+                          IsTextSearchEnabled="False"
                           HorizontalAlignment="Stretch"
                           FontSize="12"
                           Foreground="{DynamicResource TextPrimary}"/>
@@ -181,7 +184,7 @@
           <Border Background="{DynamicResource AppBackground}"
                   BorderBrush="{DynamicResource CardBorder}"
                   BorderThickness="1" CornerRadius="6" Padding="10">
-            <StackPanel Spacing="7">
+            <StackPanel Spacing="7" IsEnabled="{Binding IsNotRunning}">
               <Grid ColumnDefinitions="Auto,*">
                 <TextBlock Text="분할 횟수" MinWidth="90" FontSize="11"
                            Foreground="{DynamicResource TextSecondary}"
@@ -353,6 +356,12 @@
                            Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
                 <TextBlock Grid.Column="1" Text="{Binding RequiredSeedText}"
                            FontSize="12" FontWeight="Bold" Foreground="{DynamicResource TextPrimary}"/>
+              </Grid>
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Text="총 투자금 (레버리지 포함)" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding TotalPositionText}"
+                           FontSize="12" FontWeight="Bold" Foreground="#FF9800"/>
               </Grid>
               <Grid ColumnDefinitions="*,Auto">
                 <TextBlock Text="예상 수익" FontSize="11"
