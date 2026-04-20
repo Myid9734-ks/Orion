@@ -971,7 +971,8 @@ public class SymbolTabViewModel : ReactiveObject
                 MartinMax     = e.MartinMax,
                 PnlAmount     = e.PnlAmount,
                 PnlPercent    = e.PnlPercent,
-                ClosedAt      = e.ClosedAt
+                ClosedAt      = e.ClosedAt,
+                AmountMode    = _amountMode.ToString()
             };
 
             TradeHistory.Insert(0, record);

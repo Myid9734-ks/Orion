@@ -222,15 +222,16 @@
               <Border Grid.Row="0"
                       Background="{DynamicResource HeaderBackground}"
                       CornerRadius="8,8,0,0" Padding="14,8">
-                <Grid ColumnDefinitions="36,120,64,*,80,110,90,100">
+                <Grid ColumnDefinitions="36,120,64,*,80,56,110,90,100">
                   <TextBlock Grid.Column="0" Text="#" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
                   <TextBlock Grid.Column="1" Text="심볼" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
                   <TextBlock Grid.Column="2" Text="방향" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
                   <TextBlock Grid.Column="3" Text="평균진입가" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
                   <TextBlock Grid.Column="4" Text="마틴" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="5" Text="손익 (USDT)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="6" Text="손익 (%)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="7" Text="시간" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="5" Text="배분" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="6" Text="손익 (USDT)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="7" Text="손익 (%)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="8" Text="시간" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
                 </Grid>
               </Border>
               <ScrollViewer Grid.Row="1">
@@ -240,15 +241,16 @@
                       <Border Padding="14,7"
                               BorderBrush="{DynamicResource SeparatorColor}"
                               BorderThickness="0,0,0,1">
-                        <Grid ColumnDefinitions="36,120,64,*,80,110,90,100">
+                        <Grid ColumnDefinitions="36,120,64,*,80,56,110,90,100">
                           <TextBlock Grid.Column="0" Text="{Binding Number}" Foreground="{DynamicResource TextMuted}" FontSize="12"/>
                           <TextBlock Grid.Column="1" Text="{Binding Symbol}" Foreground="{DynamicResource TextSecondary}" FontSize="11"/>
                           <TextBlock Grid.Column="2" Text="{Binding Direction}" Foreground="{Binding DirectionBrush}" FontSize="12" FontWeight="Bold"/>
                           <TextBlock Grid.Column="3" Text="{Binding AvgEntryText}" Foreground="{DynamicResource TextPrimary}" FontSize="12"/>
                           <TextBlock Grid.Column="4" Text="{Binding MartinText}" Foreground="{DynamicResource TextSecondary}" FontSize="12"/>
-                          <TextBlock Grid.Column="5" Text="{Binding PnlAmountText}" Foreground="{Binding PnlBrush}" FontSize="12" FontWeight="Bold"/>
-                          <TextBlock Grid.Column="6" Text="{Binding PnlPercentText}" Foreground="{Binding PnlBrush}" FontSize="12"/>
-                          <TextBlock Grid.Column="7" Text="{Binding TimeText}" Foreground="{DynamicResource TextMuted}" FontSize="12"/>
+                          <TextBlock Grid.Column="5" Text="{Binding AmountModeText}" Foreground="{DynamicResource TextSecondary}" FontSize="12"/>
+                          <TextBlock Grid.Column="6" Text="{Binding PnlAmountText}" Foreground="{Binding PnlBrush}" FontSize="12" FontWeight="Bold"/>
+                          <TextBlock Grid.Column="7" Text="{Binding PnlPercentText}" Foreground="{Binding PnlBrush}" FontSize="12"/>
+                          <TextBlock Grid.Column="8" Text="{Binding TimeText}" Foreground="{DynamicResource TextMuted}" FontSize="12"/>
                         </Grid>
                       </Border>
                     </DataTemplate>

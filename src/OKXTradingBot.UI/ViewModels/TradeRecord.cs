@@ -17,6 +17,7 @@ public class TradeRecord
     public decimal  PnlAmount     { get; set; }
     public decimal  PnlPercent    { get; set; }
     public DateTime ClosedAt      { get; set; }
+    public string   AmountMode    { get; set; } = "";
 
     public bool   IsWin          => PnlAmount > 0;
     public IBrush DirectionBrush => Direction == "LONG" ? GreenBrush : RedBrush;
@@ -27,4 +28,11 @@ public class TradeRecord
     public string PnlAmountText  => $"{PnlAmount:+0.00;-0.00}";
     public string PnlPercentText => $"{PnlPercent:+0.00;-0.00}%";
     public string TimeText       => ClosedAt.ToString("MM/dd HH:mm");
+    public string AmountModeText => AmountMode switch
+    {
+        "Equal"      => "균등",
+        "Multiplier" => "배수",
+        "Fibonacci"  => "피보",
+        _            => "-"
+    };
 }
