@@ -592,6 +592,11 @@ public class MainWindowViewModel : ReactiveObject
         set { this.RaiseAndSetIfChanged(ref _quietEnd, value); MarkUnsaved(); }
     }
 
+    public static IReadOnlyList<string> TimeOptions { get; } =
+        Enumerable.Range(0, 48)
+                  .Select(i => $"{i / 2:D2}:{(i % 2 == 0 ? "00" : "30")}")
+                  .ToList();
+
     // ── 테마 / 모드 ───────────────────────────────────────────────────
 
     public bool IsBacktestMode
@@ -1024,8 +1029,8 @@ public class MainWindowViewModel : ReactiveObject
         _notifyStopLoss        = s.NotifyStopLoss;
         _notifyError           = s.NotifyError;
         _quietHoursEnabled     = s.QuietHoursEnabled;
-        _quietStart            = s.QuietStart;
-        _quietEnd              = s.QuietEnd;
+        _quietStart            = TimeOptions.Contains(s.QuietStart) ? s.QuietStart : "23:00";
+        _quietEnd              = TimeOptions.Contains(s.QuietEnd)   ? s.QuietEnd   : "07:00";
         _isLoading             = false;
 
         // 전체 프로퍼티 갱신

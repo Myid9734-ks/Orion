@@ -16,7 +16,7 @@ public class PriceChartControl : Control
         AvaloniaProperty.Register<PriceChartControl, IReadOnlyList<Candle>?>(nameof(Candles));
 
     public static readonly StyledProperty<ChartType> ChartTypeProperty =
-        AvaloniaProperty.Register<PriceChartControl, ChartType>(nameof(ChartType), ChartType.Line);
+        AvaloniaProperty.Register<PriceChartControl, ChartType>(nameof(ChartType), ChartType.Candle);
 
     public IReadOnlyList<Candle>? Candles
     {

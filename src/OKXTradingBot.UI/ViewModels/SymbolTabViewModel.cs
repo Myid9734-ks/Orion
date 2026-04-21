@@ -97,8 +97,8 @@ public class SymbolTabViewModel : ReactiveObject
     private bool          _autoRepeat        = true;
 
     // ── 차트 ──────────────────────────────────────────────────────────
-    private string    _selectedBar       = "1m";
-    private ChartType _selectedChartType = ChartType.Line;
+    private string    _selectedBar       = "1D";
+    private ChartType _selectedChartType = ChartType.Candle;
 
     // ── 런타임 상태 ───────────────────────────────────────────────────
     private bool                    _isRunning;

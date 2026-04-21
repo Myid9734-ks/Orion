@@ -554,11 +554,12 @@
                            Foreground="{DynamicResource TextMuted}"/>
                 <Grid ColumnDefinitions="*,24,*">
                   <StackPanel Grid.Column="0" Spacing="3">
-                    <TextBlock Text="제한 시작 (HH:mm)" FontSize="10"
+                    <TextBlock Text="제한 시작" FontSize="10"
                                Foreground="{DynamicResource TextSecondary}"/>
-                    <TextBox Text="{Binding QuietStart}"
-                             Watermark="23:00" FontSize="13"
-                             IsEnabled="{Binding QuietHoursEnabled}"/>
+                    <ComboBox ItemsSource="{x:Static vm:MainWindowViewModel.TimeOptions}"
+                              SelectedItem="{Binding QuietStart, Mode=TwoWay}"
+                              FontSize="13" HorizontalAlignment="Stretch"
+                              IsEnabled="{Binding QuietHoursEnabled}"/>
                   </StackPanel>
                   <TextBlock Grid.Column="1" Text="→"
                              FontSize="14"
@@ -567,11 +568,12 @@
                              Foreground="{DynamicResource TextMuted}"
                              Margin="0,0,0,6"/>
                   <StackPanel Grid.Column="2" Spacing="3">
-                    <TextBlock Text="제한 종료 (HH:mm)" FontSize="10"
+                    <TextBlock Text="제한 종료" FontSize="10"
                                Foreground="{DynamicResource TextSecondary}"/>
-                    <TextBox Text="{Binding QuietEnd}"
-                             Watermark="07:00" FontSize="13"
-                             IsEnabled="{Binding QuietHoursEnabled}"/>
+                    <ComboBox ItemsSource="{x:Static vm:MainWindowViewModel.TimeOptions}"
+                              SelectedItem="{Binding QuietEnd, Mode=TwoWay}"
+                              FontSize="13" HorizontalAlignment="Stretch"
+                              IsEnabled="{Binding QuietHoursEnabled}"/>
                   </StackPanel>
                 </Grid>
               </StackPanel>

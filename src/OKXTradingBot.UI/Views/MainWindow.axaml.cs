@@ -40,6 +40,7 @@ public partial class MainWindow : Window
     private async void OnTabSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (_isSwitchingTab) return;
+        if (!ReferenceEquals(e.Source, MainTabControl)) return;  // ComboBox 등 자식 이벤트 버블업 무시
         if (DataContext is not MainWindowViewModel vm) return;
 
         var fromIndex = _previousTabIndex;
