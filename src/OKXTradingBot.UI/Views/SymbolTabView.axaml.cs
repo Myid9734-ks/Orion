@@ -124,7 +124,8 @@ public partial class SymbolTabView : UserControl
             new List<decimal>(vm.MartinGapSteps),
             vm.TotalBudget   ?? 100m,
             vm.AmountMode,
-            new List<decimal>(vm.MartinAmountWeights));
+            new List<decimal>(vm.MartinAmountWeights),
+            vm.UsdKrwRate);
 
         var result = await dialog.ShowDialog<StepParamsResult?>(parentWindow);
         if (result?.Confirmed == true)

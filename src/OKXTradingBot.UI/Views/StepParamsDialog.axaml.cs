@@ -46,6 +46,13 @@ public class StepParamRow : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _amountDisplay, value);
     }
 
+    private string _krwDisplay = "";
+    public string KrwDisplay
+    {
+        get => _krwDisplay;
+        set => this.RaiseAndSetIfChanged(ref _krwDisplay, value);
+    }
+
     private bool _showWeight;
     public bool ShowWeight
     {
@@ -75,6 +82,7 @@ public partial class StepParamsDialog : Window
     private readonly decimal _defaultGap;
     private readonly decimal _totalBudget;
     private readonly int     _martinCount;
+    private readonly decimal _usdKrwRate;
 
     private MartinAmountMode _currentMode;
 
@@ -86,11 +94,13 @@ public partial class StepParamsDialog : Window
         List<decimal>    existingGapSteps,
         decimal          totalBudget,
         MartinAmountMode currentMode,
-        List<decimal>    existingWeights)
+        List<decimal>    existingWeights,
+        decimal          usdKrwRate = 0m)
     {
         _defaultGap  = defaultGap;
         _totalBudget = totalBudget;
         _martinCount = martinCount;
+        _usdKrwRate  = usdKrwRate;
         // Equal 모드로 열리면 배수 모드로 기본 진입
         _currentMode = currentMode == MartinAmountMode.Equal ? MartinAmountMode.Multiplier : currentMode;
 
@@ -202,7 +212,12 @@ public partial class StepParamsDialog : Window
         var total   = amounts.Sum();
 
         for (int i = 0; i < Rows.Count && i < amounts.Count; i++)
+        {
             Rows[i].AmountDisplay = amounts[i].ToString("F2");
+            Rows[i].KrwDisplay    = _usdKrwRate > 0
+                ? $"₩{amounts[i] * _usdKrwRate:N0}"
+                : "";
+        }
 
         if (TotalAmountLabel != null)
             TotalAmountLabel.Text = $"총 투자금: {_totalBudget:F2} USDT  |  배분 합계: {total:F2} USDT";
