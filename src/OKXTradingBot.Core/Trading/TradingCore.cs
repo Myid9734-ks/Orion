@@ -842,9 +842,10 @@ public class TradingCore
                 OpenedAt       = DateTime.UtcNow
             };
 
+            var liqInfo = FormatLiquidationLog();
             var msg = $"📈 신규 진입 [{direction}] | " +
                       $"{amount:F2} USDT @ {filledPrice:N2} | " +
-                      $"1/{_config.MartinCount}단계";
+                      $"1/{_config.MartinCount}단계{liqInfo}";
             Log(msg);
             await NotifyAsync(
                 $"📈 <b>신규 진입</b>\n" +
@@ -871,10 +872,11 @@ public class TradingCore
                                        / _position.TotalAmount;
             _position.LastEntryPrice = filledPrice;
 
+            var liqInfo = FormatLiquidationLog();
             var msg = $"➕ 마틴 {_position.MartinStep}단계 [{direction}] | " +
                       $"{amount:F2} USDT @ {filledPrice:N2} | " +
                       $"평균가: {_position.AvgEntryPrice:N2} | " +
-                      $"누적: {_position.TotalAmount:F2} USDT";
+                      $"누적: {_position.TotalAmount:F2} USDT{liqInfo}";
             Log(msg);
             await NotifyAsync(
                 $"➕ <b>마틴 {_position.MartinStep}단계</b>\n" +
@@ -887,6 +889,14 @@ public class TradingCore
         }
 
         OnPositionUpdated?.Invoke(this, _position);
+    }
+
+    private string FormatLiquidationLog()
+    {
+        var liq = _executor.GetLiquidationPrice();
+        if (liq == null) return "";
+        var modeLabel = _config.MarginModeStr == "cross" ? "교차" : "격리";
+        return $" | 청산가: {liq.Value:N2} ({modeLabel})";
     }
 
     // ═════════════════════════════════════════════
