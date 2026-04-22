@@ -56,6 +56,9 @@ public class MainWindowViewModel : ReactiveObject
     // ── 심볼 탭 ──────────────────────────────────────────────────────
     public ObservableCollection<SymbolTabViewModel> SymbolTabs { get; } = new();
 
+    // 심볼별 minSz / ctVal (OKX instruments API에서 로드)
+    private readonly Dictionary<string, (decimal MinSz, decimal CtVal)> _symbolInfos = new();
+
     // ── 수익률 탭 필터 ────────────────────────────────────────────────
     private static readonly IBrush _activePeriodBg = new SolidColorBrush(Color.Parse("#2979FF"));
     private static readonly IBrush _activePeriodFg = Brushes.White;
@@ -396,6 +399,7 @@ public class MainWindowViewModel : ReactiveObject
             onChanged: OnTabChanged,
             getGlobalConfig: BuildGlobalConfig,
             isSymbolInUse: sym => IsSymbolInUseByOtherTab(sym, tab),
+            getSymbolInfo: sym => _symbolInfos.TryGetValue(sym, out var info) ? info : (0m, 0m),
             initialSettings: settings);
 
         // 선택된 탭의 심볼/가격 변화를 헤더에 반영
@@ -664,10 +668,20 @@ public class MainWindowViewModel : ReactiveObject
                 return;
             }
 
-            var symbols = root.GetProperty("data")
-                .EnumerateArray()
+            var data = root.GetProperty("data").EnumerateArray()
+                .Where(e => (e.GetProperty("instId").GetString() ?? "").EndsWith("-USDT-SWAP"))
+                .ToList();
+
+            foreach (var e in data)
+            {
+                var id = e.GetProperty("instId").GetString() ?? "";
+                decimal.TryParse(e.TryGetProperty("minSz", out var msEl) ? msEl.GetString() : "0", out var minSz);
+                decimal.TryParse(e.TryGetProperty("ctVal", out var cvEl) ? cvEl.GetString() : "0", out var ctVal);
+                _symbolInfos[id] = (minSz, ctVal);
+            }
+
+            var symbols = data
                 .Select(e => e.GetProperty("instId").GetString() ?? "")
-                .Where(s => s.EndsWith("-USDT-SWAP"))
                 .OrderBy(s => s == "BTC-USDT-SWAP" ? "\0" : s)
                 .ToList();
 

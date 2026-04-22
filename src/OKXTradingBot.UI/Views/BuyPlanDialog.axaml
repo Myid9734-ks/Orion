@@ -1,0 +1,104 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="OKXTradingBot.UI.Views.BuyPlanDialog"
+        Title="매수 계획 확인"
+        Width="420"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        SizeToContent="Height"
+        SystemDecorations="BorderOnly"
+        Background="#1E1E2E">
+
+  <Border Padding="24" CornerRadius="10"
+          Background="#1E1E2E"
+          BorderBrush="#3A3A5C" BorderThickness="1">
+    <StackPanel Spacing="14">
+
+      <!-- 제목 -->
+      <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
+        <TextBlock Text="📋" FontSize="24" VerticalAlignment="Center"/>
+        <TextBlock Text="매수 계획 확인"
+                   FontSize="15" FontWeight="Bold"
+                   Foreground="#E0E0FF"
+                   VerticalAlignment="Center"/>
+      </StackPanel>
+
+      <!-- 기본 정보 -->
+      <Border Background="#2A2A3E" CornerRadius="6" Padding="12,10">
+        <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" x:Name="InfoGrid"/>
+      </Border>
+
+      <!-- 회차별 금액 -->
+      <Border Background="#2A2A3E" CornerRadius="6" Padding="12,10">
+        <StackPanel Spacing="4">
+          <TextBlock Text="회차별 진입 금액"
+                     FontSize="11" FontWeight="Bold"
+                     Foreground="#888899" Margin="0,0,0,4"/>
+          <ItemsControl x:Name="StepList">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <Grid ColumnDefinitions="60,*,Auto" Margin="0,2,0,2">
+                  <TextBlock Text="{Binding Label}"
+                             FontSize="12" Foreground="#888899"
+                             VerticalAlignment="Center"/>
+                  <TextBlock Grid.Column="1"
+                             Text="{Binding Amount}"
+                             FontSize="12" FontWeight="Bold"
+                             Foreground="{Binding Color}"
+                             VerticalAlignment="Center"/>
+                  <TextBlock Grid.Column="2"
+                             Text="{Binding Note}"
+                             FontSize="10" Foreground="#FF9800"
+                             VerticalAlignment="Center"/>
+                </Grid>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <!-- 합계 -->
+          <Border BorderBrush="#3A3A5C" BorderThickness="0,1,0,0" Margin="0,4,0,0" Padding="0,6,0,0">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Text="투자 필요금액" FontSize="12" FontWeight="Bold"
+                         Foreground="#CCCCDD" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="1" x:Name="TotalText"
+                         FontSize="13" FontWeight="Bold"
+                         VerticalAlignment="Center"/>
+            </Grid>
+          </Border>
+        </StackPanel>
+      </Border>
+
+      <!-- 경고 (조정 시만 표시) -->
+      <Border x:Name="WarnBorder"
+              Background="#2A1A00" CornerRadius="6" Padding="12,8"
+              IsVisible="False">
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <TextBlock Text="⚠" FontSize="14" Foreground="#FF9800" VerticalAlignment="Center"/>
+          <TextBlock x:Name="WarnText"
+                     TextWrapping="Wrap" FontSize="11" Foreground="#FF9800"
+                     VerticalAlignment="Center"/>
+        </StackPanel>
+      </Border>
+
+      <!-- 버튼 -->
+      <Grid ColumnDefinitions="*,8,*" Margin="0,4,0,0">
+        <Button x:Name="ConfirmButton"
+                Grid.Column="0"
+                Click="OnConfirm"
+                FontWeight="Bold" FontSize="13"
+                Padding="0,10" CornerRadius="6"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"/>
+        <Button Grid.Column="2"
+                Content="취소"
+                Click="OnCancel"
+                Background="#3A3A5C" Foreground="#AAAACC"
+                FontSize="13"
+                Padding="0,10" CornerRadius="6"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"/>
+      </Grid>
+
+    </StackPanel>
+  </Border>
+</Window>

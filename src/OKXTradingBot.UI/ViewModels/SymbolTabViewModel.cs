@@ -17,6 +17,19 @@ using ReactiveUI;
 
 namespace OKXTradingBot.UI.ViewModels;
 
+public record BuyPlanDialogArgs(
+    string Symbol,
+    int Leverage,
+    string MarginMode,
+    int ConfiguredCount,
+    int EffectiveCount,
+    List<(string Label, string Amount, bool IsOver)> Steps,
+    decimal RequiredTotal,
+    decimal Budget,
+    string Warning,
+    bool IsMockMode);
+
+
 /// <summary>봇 시작 시 부모 VM에서 전달받는 전역 설정 (API 키 등)</summary>
 public class GlobalBotConfig
 {
@@ -52,6 +65,7 @@ public class SymbolTabViewModel : ReactiveObject
     private readonly Action _onChanged;                     // 설정 변경 → 부모 dirty 알림
     private readonly Func<GlobalBotConfig> _getGlobalConfig;
     private readonly Func<string, bool> _isSymbolInUse;    // 중복 심볼 검사
+    private readonly Func<string, (decimal MinSz, decimal CtVal)>? _getSymbolInfo;
 
     // ── 트레이딩 내부 ──────────────────────────────────────────────────
     private TradingCore?        _core;
@@ -79,6 +93,9 @@ public class SymbolTabViewModel : ReactiveObject
     public Func<Task<bool>>? ConfirmMockStart    { get; set; }
     public Func<Task<bool>>? ConfirmStop         { get; set; }
     public Func<Task<bool>>? ConfirmForceClose   { get; set; }
+
+    /// <summary>매수계획 다이얼로그 — View에서 주입. bool=isMockMode, 반환값=확인여부</summary>
+    public Func<BuyPlanDialogArgs, Task<bool>>? ShowBuyPlan { get; set; }
 
     // ── 설정 ──────────────────────────────────────────────────────────
     private string        _symbol            = "";
@@ -151,12 +168,14 @@ public class SymbolTabViewModel : ReactiveObject
         Action onChanged,
         Func<GlobalBotConfig> getGlobalConfig,
         Func<string, bool> isSymbolInUse,
+        Func<string, (decimal MinSz, decimal CtVal)>? getSymbolInfo = null,
         SymbolTabSettings? initialSettings = null)
     {
         _symbolOptions   = symbolOptions;
         _onChanged       = onChanged;
         _getGlobalConfig = getGlobalConfig;
         _isSymbolInUse   = isSymbolInUse;
+        _getSymbolInfo   = getSymbolInfo;
 
         if (initialSettings != null)
             ApplySettings(initialSettings);
@@ -274,6 +293,10 @@ public class SymbolTabViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(ExpectedProfitText));
             this.RaisePropertyChanged(nameof(ExpectedFeeText));
             this.RaisePropertyChanged(nameof(TotalBudgetKrwText));
+            this.RaisePropertyChanged(nameof(BudgetWarningText));
+            this.RaisePropertyChanged(nameof(HasBudgetWarning));
+            this.RaisePropertyChanged(nameof(RequiredTotalText));
+            this.RaisePropertyChanged(nameof(RequiredTotalColor));
             MarkUnsaved();
         }
     }
@@ -312,6 +335,10 @@ public class SymbolTabViewModel : ReactiveObject
             this.RaiseAndSetIfChanged(ref _leverage, value ?? 10);
             this.RaisePropertyChanged(nameof(TotalPositionText));
             this.RaisePropertyChanged(nameof(ExpectedProfitText));
+            this.RaisePropertyChanged(nameof(BudgetWarningText));
+            this.RaisePropertyChanged(nameof(HasBudgetWarning));
+            this.RaisePropertyChanged(nameof(RequiredTotalText));
+            this.RaisePropertyChanged(nameof(RequiredTotalColor));
             MarkUnsaved();
         }
     }
@@ -345,6 +372,10 @@ public class SymbolTabViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(SingleOrderAmountText));
             this.RaisePropertyChanged(nameof(SingleOrderAmountValueText));
             this.RaisePropertyChanged(nameof(ExpectedFeeText));
+            this.RaisePropertyChanged(nameof(BudgetWarningText));
+            this.RaisePropertyChanged(nameof(HasBudgetWarning));
+            this.RaisePropertyChanged(nameof(RequiredTotalText));
+            this.RaisePropertyChanged(nameof(RequiredTotalColor));
             MarkUnsaved();
         }
     }
@@ -407,6 +438,10 @@ public class SymbolTabViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(IsUniformMode));
             this.RaisePropertyChanged(nameof(StepModeSummary));
             this.RaisePropertyChanged(nameof(CustomStepsLabel));
+            this.RaisePropertyChanged(nameof(BudgetWarningText));
+            this.RaisePropertyChanged(nameof(HasBudgetWarning));
+            this.RaisePropertyChanged(nameof(RequiredTotalText));
+            this.RaisePropertyChanged(nameof(RequiredTotalColor));
             MarkUnsaved();
         }
     }
@@ -450,6 +485,10 @@ public class SymbolTabViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(IsUniformMode));
             this.RaisePropertyChanged(nameof(StepModeSummary));
             this.RaisePropertyChanged(nameof(CustomStepsLabel));
+            this.RaisePropertyChanged(nameof(BudgetWarningText));
+            this.RaisePropertyChanged(nameof(HasBudgetWarning));
+            this.RaisePropertyChanged(nameof(RequiredTotalText));
+            this.RaisePropertyChanged(nameof(RequiredTotalColor));
             MarkUnsaved();
         }
     }
@@ -504,6 +543,151 @@ public class SymbolTabViewModel : ReactiveObject
 
     public string RequiredSeedText      => TotalBudget > 0 ? $"${TotalBudget:N2}" : "-";
     public string TotalPositionText     => TotalBudget > 0 && Leverage > 0 ? $"${TotalBudget * Leverage:N2}" : "-";
+
+    public string BudgetWarningText => ComputeBudgetAdjustment().Warning;
+    public bool   HasBudgetWarning  => !string.IsNullOrEmpty(BudgetWarningText);
+
+    /// <summary>
+    /// 투자 필요금액: 최소주문금액을 1회차로 고정했을 때 전체 회차에 필요한 금액.
+    /// 배수/회차 변경 시 실시간으로 변한다.
+    /// </summary>
+    public decimal GetMinOrderUsdt()
+    {
+        if (_currentPrice <= 0 || _getSymbolInfo == null) return 0m;
+        var (minSz, ctVal) = _getSymbolInfo(_symbol);
+        if (minSz <= 0 || ctVal <= 0) return 0m;
+        return minSz * ctVal * _currentPrice / (_leverage > 0 ? _leverage : 1);
+    }
+
+    private decimal ComputeRequiredTotal()
+    {
+        if (_currentPrice <= 0 || _getSymbolInfo == null)
+            return _totalBudget;
+
+        var (minSz, ctVal) = _getSymbolInfo(_symbol);
+        if (minSz <= 0 || ctVal <= 0)
+            return _totalBudget;
+
+        var minUsdt = minSz * ctVal * _currentPrice / (_leverage > 0 ? _leverage : 1);
+
+        if (_martinAmountWeights.Count == 0 || _amountMode == MartinAmountMode.Equal)
+        {
+            var firstStep = Math.Max(_totalBudget / _martinCount, minUsdt);
+            return firstStep * _martinCount;
+        }
+        else
+        {
+            var absWeights = _martinAmountWeights.Take(_martinCount).ToList();
+            if (absWeights.Count == 0 || absWeights[0] <= 0) return _totalBudget;
+
+            var weightSum = absWeights.Sum();
+            var firstStep = Math.Max(_totalBudget / weightSum * absWeights[0], minUsdt);
+            return firstStep / absWeights[0] * weightSum;
+        }
+    }
+
+    public string RequiredTotalText  => $"투자 필요금액: {ComputeRequiredTotal():F2} USDT";
+    public string RequiredTotalColor => ComputeRequiredTotal() > _totalBudget ? "#FF5252" : "#2979FF";
+
+    /// <summary>
+    /// 예산 + 최소주문금액 기준으로 유효 회차/예산을 계산.
+    /// 1회차 금액이 최소주문금액 미달이면 1회차를 최소금액으로 고정하고
+    /// 예산 안에 들어오는 최대 회차를 역산한다. 배수는 건드리지 않는다.
+    /// </summary>
+    private (int EffectiveCount, decimal EffectiveBudget, string Warning) ComputeBudgetAdjustment()
+    {
+        if (_currentPrice <= 0 || _getSymbolInfo == null)
+            return (_martinCount, _totalBudget, "");
+
+        var (minSz, ctVal) = _getSymbolInfo(_symbol);
+        if (minSz <= 0 || ctVal <= 0)
+            return (_martinCount, _totalBudget, "");
+
+        var minUsdt = minSz * ctVal * _currentPrice / (_leverage > 0 ? _leverage : 1);
+
+        // ── Equal 모드 ──
+        if (_martinAmountWeights.Count == 0 || _amountMode == MartinAmountMode.Equal)
+        {
+            var stepAmt = _totalBudget / _martinCount;
+            if (stepAmt >= minUsdt) return (_martinCount, _totalBudget, "");
+
+            var maxSteps = (int)(_totalBudget / minUsdt);
+            if (maxSteps < 1) maxSteps = 1;
+            return (maxSteps, _totalBudget,
+                $"1회차 {stepAmt:F2} < 최소 {minUsdt:F2} USDT → {maxSteps}회차로 조정");
+        }
+
+        // ── 가중치(배수/피보나치) 모드 ──
+        // MartinAmountWeights 는 절대 가중치 [1, 2, 6, 12, 36 …]
+        var absWeights = _martinAmountWeights.Take(_martinCount).ToList();
+        if (absWeights.Count == 0) return (_martinCount, _totalBudget, "");
+
+        var weightSum = absWeights.Sum();
+        var firstAmt  = _totalBudget * absWeights[0] / weightSum;
+
+        if (firstAmt >= minUsdt) return (_martinCount, _totalBudget, "");
+
+        // 1회차를 minUsdt로 고정 후 예산 안에 들어오는 최대 회차 탐색
+        for (int n = _martinCount; n >= 1; n--)
+        {
+            var partialSum  = absWeights.Take(n).Sum();
+            var totalNeeded = minUsdt / absWeights[0] * partialSum;
+            if (totalNeeded <= _totalBudget)
+            {
+                var msg = n < _martinCount
+                    ? $"1회차 {firstAmt:F2} < 최소 {minUsdt:F2} USDT → 1회차 최소금액 고정, {n}회차로 조정"
+                    : $"1회차 {firstAmt:F2} < 최소 {minUsdt:F2} USDT → 1회차 최소금액으로 고정";
+                return (n, totalNeeded, msg);
+            }
+        }
+
+        return (1, minUsdt,
+            $"1회차 최소 {minUsdt:F2} USDT → 예산 {_totalBudget:F2} USDT 부족, 1회차만 가능");
+    }
+
+    public BuyPlanDialogArgs BuildBuyPlanArgs(bool isMockMode)
+    {
+        var (effectiveCount, effectiveBudget, warning) = ComputeBudgetAdjustment();
+
+        // 유효 회차 기준 금액 계산
+        var planConfig = new OKXTradingBot.Core.Models.TradeConfig
+        {
+            TotalBudget         = effectiveBudget,
+            MartinCount         = effectiveCount,
+            MartinAmountWeights = _martinAmountWeights.Take(effectiveCount).ToList(),
+            AmountMode          = _amountMode
+        };
+        var effectiveAmounts = planConfig.GetAllStepAmounts();
+
+        // 전체 회차 목록 (초과 회차는 IsOver=true)
+        var origConfig = new OKXTradingBot.Core.Models.TradeConfig
+        {
+            TotalBudget         = _totalBudget,
+            MartinCount         = _martinCount,
+            MartinAmountWeights = _martinAmountWeights,
+            AmountMode          = _amountMode
+        };
+        var steps = new List<(string Label, string Amount, bool IsOver)>();
+        for (int i = 0; i < _martinCount; i++)
+        {
+            if (i < effectiveAmounts.Count)
+                steps.Add(($"{i + 1}회차", $"{effectiveAmounts[i]:F2} USDT", false));
+            else
+                steps.Add(($"{i + 1}회차", $"{origConfig.GetAmountForStep(i + 1):F2} USDT", true));
+        }
+
+        return new BuyPlanDialogArgs(
+            Symbol:          _symbol,
+            Leverage:        _leverage,
+            MarginMode:      _marginMode,
+            ConfiguredCount: _martinCount,
+            EffectiveCount:  effectiveCount,
+            Steps:           steps,
+            RequiredTotal:   effectiveAmounts.Sum(),
+            Budget:          _totalBudget,
+            Warning:         warning,
+            IsMockMode:      isMockMode);
+    }
 
     public string ExpectedProfitText =>
         TotalBudget > 0 && Leverage > 0 && TargetProfit > 0
@@ -582,6 +766,10 @@ public class SymbolTabViewModel : ReactiveObject
         {
             this.RaiseAndSetIfChanged(ref _currentPrice, value);
             this.RaisePropertyChanged(nameof(CurrentPriceText));
+            this.RaisePropertyChanged(nameof(BudgetWarningText));
+            this.RaisePropertyChanged(nameof(HasBudgetWarning));
+            this.RaisePropertyChanged(nameof(RequiredTotalText));
+            this.RaisePropertyChanged(nameof(RequiredTotalColor));
         }
     }
 
@@ -738,7 +926,14 @@ public class SymbolTabViewModel : ReactiveObject
     {
         var global = _getGlobalConfig();
 
-        // 모의거래 모드일 때 사용자 확인
+        // 1단계: 매수 계획 확인
+        if (ShowBuyPlan != null)
+        {
+            var args = BuildBuyPlanArgs(global.IsBacktestMode);
+            if (!await ShowBuyPlan(args)) return;
+        }
+
+        // 2단계: 모의거래 추가 확인
         if (global.IsBacktestMode && ConfirmMockStart != null)
         {
             var proceed = await ConfirmMockStart();
@@ -746,6 +941,21 @@ public class SymbolTabViewModel : ReactiveObject
         }
 
         var config = BuildConfig(global);
+
+        // ── 예산 / 최소주문금액 기준 회차 조정 ──
+        var (effectiveCount, effectiveBudget, adjustWarning) = ComputeBudgetAdjustment();
+        if (!string.IsNullOrEmpty(adjustWarning))
+        {
+            AddLog($"⚠ {adjustWarning}");
+            config.MartinCount = effectiveCount;
+            config.TotalBudget = effectiveBudget;
+            if (config.MartinAmountWeights.Count > effectiveCount)
+                config.MartinAmountWeights = config.MartinAmountWeights.Take(effectiveCount).ToList();
+            if (config.MartinGapSteps.Count > effectiveCount)
+                config.MartinGapSteps = config.MartinGapSteps.Take(effectiveCount).ToList();
+            if (config.TargetProfitSteps.Count > effectiveCount)
+                config.TargetProfitSteps = config.TargetProfitSteps.Take(effectiveCount).ToList();
+        }
 
         // ── 알림 설정 구성 (필드 재사용 — 설정 변경 시 in-place 갱신됨) ──
         ApplyNotifyConfig(global);
@@ -890,7 +1100,12 @@ public class SymbolTabViewModel : ReactiveObject
             var rest    = new OkxRestClient("", "", "", NullLogger<OkxRestClient>.Instance);
             var candles = await rest.GetCandlesAsync(_symbol, 200, _selectedBar);
             _candleBuffer = candles;
-            Avalonia.Threading.Dispatcher.UIThread.Post(() => RecentCandles = _candleBuffer.ToList());
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                RecentCandles = _candleBuffer.ToList();
+                if (!_isRunning && _candleBuffer.Count > 0 && _candleBuffer[^1].Close > 0)
+                    CurrentPrice = _candleBuffer[^1].Close;
+            });
         }
         catch { }
     }
@@ -939,7 +1154,12 @@ public class SymbolTabViewModel : ReactiveObject
             _candleBuffer.Add(live);
         while (_candleBuffer.Count > 200) _candleBuffer.RemoveAt(0);
         var snapshot = _candleBuffer.ToList();
-        Avalonia.Threading.Dispatcher.UIThread.Post(() => RecentCandles = snapshot);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            RecentCandles = snapshot;
+            if (!_isRunning && live.Close > 0)
+                CurrentPrice = live.Close;
+        });
     }
 
     private void OnChartCandleCompleted(object? sender, Candle completed)
@@ -992,7 +1212,7 @@ public class SymbolTabViewModel : ReactiveObject
                 MartinStep       = pos.MartinStep;
                 TotalAmount      = pos.TotalAmount;
                 AvgEntryPrice    = pos.AvgEntryPrice;
-                NextMartinPrice  = pos.GetNextMartinTriggerPrice(GetMartinGapForStep(pos.MartinStep));
+                NextMartinPrice  = pos.GetNextMartinTriggerPrice(GetMartinGapForStep(pos.MartinStep + 1));
                 UnrealizedPnlPct = pos.CurrentPnlPercent;
             }
             else if (pos.Status == PositionStatus.Closed)

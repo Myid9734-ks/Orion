@@ -74,6 +74,19 @@ public class StepParamRow : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _gapEditable, value);
     }
 
+    private bool _isOverBudget;
+    public bool IsOverBudget
+    {
+        get => _isOverBudget;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _isOverBudget, value);
+            this.RaisePropertyChanged(nameof(AmountColor));
+        }
+    }
+
+    public string AmountColor => _isOverBudget ? "#FF5252" : "#FFFFFF";
+
     public Action? OnWeightChanged { get; set; }
 }
 
@@ -83,6 +96,7 @@ public partial class StepParamsDialog : Window
     private readonly decimal _totalBudget;
     private readonly int     _martinCount;
     private readonly decimal _usdKrwRate;
+    private readonly decimal _minOrderUsdt;
 
     private MartinAmountMode _currentMode;
 
@@ -95,12 +109,14 @@ public partial class StepParamsDialog : Window
         decimal          totalBudget,
         MartinAmountMode currentMode,
         List<decimal>    existingWeights,
-        decimal          usdKrwRate = 0m)
+        decimal          usdKrwRate = 0m,
+        decimal          minOrderUsdt = 0m)
     {
-        _defaultGap  = defaultGap;
-        _totalBudget = totalBudget;
-        _martinCount = martinCount;
-        _usdKrwRate  = usdKrwRate;
+        _defaultGap   = defaultGap;
+        _totalBudget  = totalBudget;
+        _martinCount  = martinCount;
+        _usdKrwRate   = usdKrwRate;
+        _minOrderUsdt = minOrderUsdt;
         // Equal 모드로 열리면 배수 모드로 기본 진입
         _currentMode = currentMode == MartinAmountMode.Equal ? MartinAmountMode.Multiplier : currentMode;
 
@@ -116,8 +132,10 @@ public partial class StepParamsDialog : Window
             var row = new StepParamRow
             {
                 Step        = i,
-                Gap         = i <= existingGapSteps.Count ? existingGapSteps[i - 1] : defaultGap,
-                Weight      = i <= displayWeights.Count ? displayWeights[i - 1] : 1m,
+                Gap         = i <= existingGapSteps.Count ? existingGapSteps[i - 1]
+                              : existingGapSteps.Count > 0 ? existingGapSteps[^1] : defaultGap,
+                Weight      = i <= displayWeights.Count ? displayWeights[i - 1]
+                              : displayWeights.Count > 0 ? displayWeights[^1] : 1m,
                 ShowWeight  = showW,
                 GapEditable = i != 1,
             };
@@ -196,7 +214,10 @@ public partial class StepParamsDialog : Window
         if (_currentMode == MartinAmountMode.Equal)
         {
             if (TotalAmountLabel != null)
-                TotalAmountLabel.Text = $"총 투자금: {_totalBudget:F2} USDT  |  균등 분할: {Math.Round(_totalBudget / _martinCount, 2):F2} USDT × {_martinCount}";
+            {
+                var stepAmt = Math.Max(Math.Round(_totalBudget / _martinCount, 2), _minOrderUsdt > 0 ? Math.Round(_minOrderUsdt, 2) : 0m);
+                TotalAmountLabel.Text = $"총 투자금: {_totalBudget:F2} USDT  |  균등 분할: {stepAmt:F2} USDT × {_martinCount}";
+            }
             return;
         }
 
@@ -209,14 +230,25 @@ public partial class StepParamsDialog : Window
 
         var config = new TradeConfig { TotalBudget = _totalBudget, MartinCount = _martinCount };
         var amounts = config.WeightsToAmounts(absWeights);
-        var total   = amounts.Sum();
 
+        // 최소 주문금액 기준으로 스케일 (매수 계획과 동일한 계산)
+        if (_minOrderUsdt > 0 && absWeights.Count > 0 && amounts.Count > 0 && amounts[0] < _minOrderUsdt)
+        {
+            var scale = _minOrderUsdt / absWeights[0];
+            amounts = absWeights.Select(w => Math.Round(w * scale, 2)).ToList();
+        }
+
+        var total = amounts.Sum();
+
+        decimal cumulative = 0m;
         for (int i = 0; i < Rows.Count && i < amounts.Count; i++)
         {
+            cumulative += amounts[i];
             Rows[i].AmountDisplay = amounts[i].ToString("F2");
             Rows[i].KrwDisplay    = _usdKrwRate > 0
                 ? $"₩{amounts[i] * _usdKrwRate:N0}"
                 : "";
+            Rows[i].IsOverBudget = cumulative > _totalBudget;
         }
 
         if (TotalAmountLabel != null)

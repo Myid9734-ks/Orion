@@ -181,6 +181,10 @@
                              FontSize="10" Foreground="{DynamicResource AccentColor}"
                              Opacity="0.8" HorizontalAlignment="Right"
                              IsVisible="{Binding TotalBudgetKrwText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                  <TextBlock Text="{Binding BudgetWarningText}"
+                             FontSize="10" Foreground="#FF5252"
+                             TextWrapping="Wrap"
+                             IsVisible="{Binding HasBudgetWarning}"/>
                 </StackPanel>
               </Grid>
               <!-- 계좌잔고 -->
@@ -295,6 +299,12 @@
                         Background="{DynamicResource CardBorder}"
                         Foreground="{DynamicResource TextPrimary}"/>
               </Grid>
+
+              <!-- 투자 필요금액 -->
+              <TextBlock Text="{Binding RequiredTotalText}"
+                         FontSize="11" FontWeight="Bold"
+                         Foreground="{Binding RequiredTotalColor}"
+                         Margin="0,2,0,0"/>
 
               <!-- 마틴 진행 바 -->
               <Grid ColumnDefinitions="*,Auto" Margin="0,3,0,0">

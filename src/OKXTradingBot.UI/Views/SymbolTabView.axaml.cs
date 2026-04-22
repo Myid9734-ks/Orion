@@ -16,6 +16,7 @@ public partial class SymbolTabView : UserControl
         {
             if (DataContext is SymbolTabViewModel vm)
             {
+                vm.ShowBuyPlan       = ShowBuyPlanAsync;
                 vm.ConfirmMockStart  = ShowMockStartConfirmAsync;
                 vm.ConfirmStop       = ShowStopConfirmAsync;
                 vm.ConfirmForceClose = ShowForceCloseConfirmAsync;
@@ -47,6 +48,20 @@ public partial class SymbolTabView : UserControl
     }
 
     private SymbolTabViewModel? Vm => DataContext as SymbolTabViewModel;
+
+    private async Task<bool> ShowBuyPlanAsync(BuyPlanDialogArgs args)
+    {
+        var parentWindow = TopLevel.GetTopLevel(this) as Window;
+        if (parentWindow == null) return true;
+
+        var dialog = new BuyPlanDialog(
+            args.Symbol, args.Leverage, args.MarginMode,
+            args.ConfiguredCount, args.EffectiveCount,
+            args.Steps, args.RequiredTotal, args.Budget,
+            args.Warning, args.IsMockMode);
+        var result = await dialog.ShowDialog<bool?>(parentWindow);
+        return result == true;
+    }
 
     private async Task<bool> ShowMockStartConfirmAsync()
     {
@@ -125,7 +140,8 @@ public partial class SymbolTabView : UserControl
             vm.TotalBudget   ?? 100m,
             vm.AmountMode,
             new List<decimal>(vm.MartinAmountWeights),
-            vm.UsdKrwRate);
+            vm.UsdKrwRate,
+            vm.GetMinOrderUsdt());
 
         var result = await dialog.ShowDialog<StepParamsResult?>(parentWindow);
         if (result?.Confirmed == true)

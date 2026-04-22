@@ -3,7 +3,7 @@
         x:Class="OKXTradingBot.UI.Views.StepParamsDialog"
         Title="진입 커스텀 설정"
         Width="620" MinHeight="200"
-        MaxHeight="680"
+        MaxHeight="800"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource AppBackground}">
@@ -89,7 +89,7 @@
         </Grid>
 
         <!-- 데이터 행 -->
-        <ScrollViewer MaxHeight="340" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer MaxHeight="460" VerticalScrollBarVisibility="Auto">
           <ItemsControl ItemsSource="{Binding Rows}">
             <ItemsControl.ItemTemplate>
               <DataTemplate>
@@ -133,7 +133,7 @@
                     <StackPanel Spacing="1">
                       <TextBlock Text="{Binding AmountDisplay}"
                                  FontSize="12" FontWeight="Bold"
-                                 Foreground="{DynamicResource TextPrimary}"
+                                 Foreground="{Binding AmountColor}"
                                  HorizontalAlignment="Center"/>
                       <TextBlock Text="{Binding KrwDisplay}"
                                  FontSize="10"

@@ -433,7 +433,7 @@ public class TradingCore
         if (_position.MartinStep >= _config.MartinCount)
             return; // 최대 단계 도달
 
-        var gap          = _config.GetMartinGapForStep(_position.MartinStep);
+        var gap          = _config.GetMartinGapForStep(_position.MartinStep + 1);
         var triggerPrice = _position.GetNextMartinTriggerPrice(gap);
 
         bool triggered = _position.Direction == TradeDirection.Long
@@ -534,7 +534,7 @@ public class TradingCore
 
         for (int step = _position.MartinStep + 1; step <= _config.MartinCount; step++)
         {
-            var gap          = _config.GetMartinGapForStep(step - 1);
+            var gap          = _config.GetMartinGapForStep(step);
             var triggerPrice = _position.Direction == TradeDirection.Long
                 ? lastEntryPx * (1 - gap / 100)
                 : lastEntryPx * (1 + gap / 100);
