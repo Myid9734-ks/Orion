@@ -119,10 +119,10 @@ public partial class SymbolTabView : UserControl
         if (parentWindow == null) return;
 
         var dialog = new StepParamsDialog(
-            vm.MartinCount,
-            vm.MartinGap,
+            vm.MartinCount   ?? 9,
+            vm.MartinGap     ?? 0.5m,
             new List<decimal>(vm.MartinGapSteps),
-            vm.TotalBudget,
+            vm.TotalBudget   ?? 100m,
             vm.AmountMode,
             new List<decimal>(vm.MartinAmountWeights));
 

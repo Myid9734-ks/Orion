@@ -1,7 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="OKXTradingBot.UI.Views.StepParamsDialog"
-        Title="단계별 파라미터 설정"
+        Title="진입 커스텀 설정"
         Width="580" MinHeight="200"
         MaxHeight="680"
         CanResize="False"
@@ -12,7 +12,7 @@
 
     <!-- 안내 문구 -->
     <StackPanel Grid.Row="0" Spacing="4" Margin="0,0,0,12">
-      <TextBlock Text="마틴 단계별 진입 간격 / 금액 배분 설정"
+      <TextBlock Text="진입 간격 / 금액 배분 커스텀 설정"
                  FontSize="13" FontWeight="Bold"
                  Foreground="{DynamicResource TextPrimary}"/>
       <TextBlock Text="배수: 이전 회차 대비 배수 입력 (예: 2 → 이전의 2배). 피보나치: 비율 직접 입력."
@@ -30,26 +30,17 @@
         <TextBlock Text="금액 배분 모드"
                    FontSize="11" FontWeight="Bold"
                    Foreground="{DynamicResource TextSecondary}"/>
-        <Grid ColumnDefinitions="*,*,*" Height="32">
+        <Grid ColumnDefinitions="*,*" Height="32">
           <Button Grid.Column="0"
-                  Content="균등"
-                  Click="OnModeEqual"
+                  Content="배수"
+                  Click="OnModeMultiplier"
                   HorizontalAlignment="Stretch"
                   HorizontalContentAlignment="Center"
                   CornerRadius="6,0,0,6"
                   FontSize="12" FontWeight="Bold"
                   Padding="0,6"
-                  Name="BtnModeEqual"/>
-          <Button Grid.Column="1"
-                  Content="배수"
-                  Click="OnModeMultiplier"
-                  HorizontalAlignment="Stretch"
-                  HorizontalContentAlignment="Center"
-                  CornerRadius="0"
-                  FontSize="12" FontWeight="Bold"
-                  Padding="0,6"
                   Name="BtnModeMultiplier"/>
-          <Button Grid.Column="2"
+          <Button Grid.Column="1"
                   Content="피보나치"
                   Click="OnModeFibonacci"
                   HorizontalAlignment="Stretch"
@@ -120,7 +111,8 @@
                                  Minimum="0.1" Maximum="20" Increment="0.1"
                                  FormatString="F2"
                                  FontSize="12" FontWeight="Bold"
-                                 Margin="3,0"/>
+                                 Margin="3,0"
+                                 IsEnabled="{Binding GapEditable}"/>
                   <!-- 배수/비율 (배수·피보나치 모드에서만 표시) -->
                   <NumericUpDown Grid.Column="2"
                                  Value="{Binding Weight}"

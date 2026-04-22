@@ -454,7 +454,8 @@ public class TradingCore
 
     private async Task CheckExitConditionsAsync(decimal currentPrice)
     {
-        var pnlPct = _position.GetUnrealizedPnlPercent(currentPrice);
+        // 레버리지 포함 수익률(%) — targetProfit / StopLossPercent 와 동일 단위
+        var pnlPct = _position.GetUnrealizedPnlPercent(currentPrice) * _config.Leverage;
 
         // 익절 체크
         var targetProfit = _config.GetTargetProfitForStep(_position.MartinStep);
@@ -484,7 +485,8 @@ public class TradingCore
         if (!_config.StopLossEnabled) return;
         if (_position.MartinStep < _config.MartinCount) return;
 
-        var pnlPct = _position.GetUnrealizedPnlPercent(currentPrice);
+        // 레버리지 포함 수익률(%) — StopLossPercent 와 동일 단위
+        var pnlPct = _position.GetUnrealizedPnlPercent(currentPrice) * _config.Leverage;
         if (pnlPct <= -_config.StopLossPercent)
         {
             Log($"🛑 [pre-orders] 손절 조건 충족: {pnlPct:F2}% ≤ -{_config.StopLossPercent}% (마틴 {_position.MartinStep}/{_config.MartinCount} 완료)");
@@ -714,8 +716,9 @@ public class TradingCore
     /// <summary>서버가 이미 청산한 상태에서 메모리/이벤트만 마무리</summary>
     private async Task FinalizeClosedFromServerAsync(decimal exitPrice, bool isStopLoss)
     {
-        var pnlPct = _position.GetUnrealizedPnlPercent(exitPrice);
-        var pnlAmt = _position.TotalAmount * pnlPct / 100 * _config.Leverage;
+        var pricePct = _position.GetUnrealizedPnlPercent(exitPrice);
+        var pnlPct   = pricePct * _config.Leverage;                      // 레버리지 포함 수익률 (로그·이벤트용)
+        var pnlAmt   = _position.TotalAmount * pricePct / 100 * _config.Leverage;
 
         _position.Status      = PositionStatus.Closed;
         _position.ClosedAt    = DateTime.UtcNow;
@@ -891,8 +894,9 @@ public class TradingCore
         // 체결가: OrderResult 우선, 없으면 currentPrice
         var exitPrice = result.FilledPrice > 0 ? result.FilledPrice : currentPrice;
 
-        var pnlPct = _position.GetUnrealizedPnlPercent(exitPrice);
-        var pnlAmt = _position.TotalAmount * pnlPct / 100 * _config.Leverage;
+        var pricePct = _position.GetUnrealizedPnlPercent(exitPrice);
+        var pnlPct   = pricePct * _config.Leverage;                      // 레버리지 포함 수익률 (로그·이벤트용)
+        var pnlAmt   = _position.TotalAmount * pricePct / 100 * _config.Leverage;
 
         _position.Status      = PositionStatus.Closed;
         _position.ClosedAt    = DateTime.UtcNow;

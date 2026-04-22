@@ -253,12 +253,12 @@ public class SymbolTabViewModel : ReactiveObject
         }
     }
 
-    public decimal TotalBudget
+    public decimal? TotalBudget
     {
         get => _totalBudget;
         set
         {
-            this.RaiseAndSetIfChanged(ref _totalBudget, value);
+            this.RaiseAndSetIfChanged(ref _totalBudget, value ?? 100m);
             this.RaisePropertyChanged(nameof(SingleOrderAmountText));
             this.RaisePropertyChanged(nameof(SingleOrderAmountValueText));
             this.RaisePropertyChanged(nameof(RequiredSeedText));
@@ -269,12 +269,12 @@ public class SymbolTabViewModel : ReactiveObject
         }
     }
 
-    public int Leverage
+    public int? Leverage
     {
         get => _leverage;
         set
         {
-            this.RaiseAndSetIfChanged(ref _leverage, value);
+            this.RaiseAndSetIfChanged(ref _leverage, value ?? 10);
             this.RaisePropertyChanged(nameof(TotalPositionText));
             this.RaisePropertyChanged(nameof(ExpectedProfitText));
             MarkUnsaved();
@@ -300,12 +300,12 @@ public class SymbolTabViewModel : ReactiveObject
     public IBrush MarginModeIsolatedBg => _marginMode == "Isolated" ? new SolidColorBrush(Color.Parse("#2979FF")) : Brushes.Transparent;
     public IBrush MarginModeIsolatedFg => _marginMode == "Isolated" ? Brushes.White : Brushes.Gray;
 
-    public int MartinCount
+    public int? MartinCount
     {
         get => _martinCount;
         set
         {
-            this.RaiseAndSetIfChanged(ref _martinCount, value);
+            this.RaiseAndSetIfChanged(ref _martinCount, value ?? 9);
             this.RaisePropertyChanged(nameof(MartinStepText));
             this.RaisePropertyChanged(nameof(SingleOrderAmountText));
             this.RaisePropertyChanged(nameof(SingleOrderAmountValueText));
@@ -314,18 +314,18 @@ public class SymbolTabViewModel : ReactiveObject
         }
     }
 
-    public decimal MartinGap
+    public decimal? MartinGap
     {
         get => _martinGap;
-        set { this.RaiseAndSetIfChanged(ref _martinGap, value); MarkUnsaved(); }
+        set { this.RaiseAndSetIfChanged(ref _martinGap, value ?? 0.5m); MarkUnsaved(); }
     }
 
-    public decimal TargetProfit
+    public decimal? TargetProfit
     {
         get => _targetProfit;
         set
         {
-            this.RaiseAndSetIfChanged(ref _targetProfit, value);
+            this.RaiseAndSetIfChanged(ref _targetProfit, value ?? 0.5m);
             this.RaisePropertyChanged(nameof(ExpectedProfitText));
             MarkUnsaved();
         }
@@ -445,10 +445,10 @@ public class SymbolTabViewModel : ReactiveObject
         set { this.RaiseAndSetIfChanged(ref _stopLossEnabled, value); MarkUnsaved(); }
     }
 
-    public decimal StopLossPercent
+    public decimal? StopLossPercent
     {
         get => _stopLossPercent;
-        set { this.RaiseAndSetIfChanged(ref _stopLossPercent, value); MarkUnsaved(); }
+        set { this.RaiseAndSetIfChanged(ref _stopLossPercent, value ?? 3.0m); MarkUnsaved(); }
     }
 
     public bool AutoRepeat

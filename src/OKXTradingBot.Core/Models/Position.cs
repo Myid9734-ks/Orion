@@ -51,10 +51,12 @@ public class Position
 
     /// <summary>
     /// 현재가 기준 미실현 PnL 업데이트 (TradingCore에서 매 캔들마다 호출)
+    /// CurrentPnlPercent = 레버리지 포함 수익률 (%)
     /// </summary>
     public void UpdateUnrealizedPnl(decimal currentPrice, int leverage)
     {
-        CurrentPnlPercent = GetUnrealizedPnlPercent(currentPrice);
-        CurrentPnlAmount  = TotalAmount * CurrentPnlPercent / 100 * leverage;
+        var pricePct      = GetUnrealizedPnlPercent(currentPrice);
+        CurrentPnlPercent = pricePct * leverage;                       // 레버리지 포함 수익률
+        CurrentPnlAmount  = TotalAmount * pricePct / 100 * leverage;   // 실현 손익금액
     }
 }

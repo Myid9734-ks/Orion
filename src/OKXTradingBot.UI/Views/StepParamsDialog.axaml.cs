@@ -60,6 +60,13 @@ public class StepParamRow : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _weightEditable, value);
     }
 
+    private bool _gapEditable = true;
+    public bool GapEditable
+    {
+        get => _gapEditable;
+        set => this.RaiseAndSetIfChanged(ref _gapEditable, value);
+    }
+
     public Action? OnWeightChanged { get; set; }
 }
 
@@ -84,9 +91,10 @@ public partial class StepParamsDialog : Window
         _defaultGap  = defaultGap;
         _totalBudget = totalBudget;
         _martinCount = martinCount;
-        _currentMode = currentMode;
+        // Equal 모드로 열리면 배수 모드로 기본 진입
+        _currentMode = currentMode == MartinAmountMode.Equal ? MartinAmountMode.Multiplier : currentMode;
 
-        var showW = currentMode != MartinAmountMode.Equal;
+        var showW = _currentMode != MartinAmountMode.Equal;
 
         // 배수 모드: 저장된 절대 가중치를 "이전 단계 대비 배수"로 변환해서 표시
         var displayWeights = (currentMode == MartinAmountMode.Multiplier && existingWeights.Count > 0)
@@ -97,17 +105,18 @@ public partial class StepParamsDialog : Window
         {
             var row = new StepParamRow
             {
-                Step       = i,
-                Gap        = i <= existingGapSteps.Count ? existingGapSteps[i - 1] : defaultGap,
-                Weight     = i <= displayWeights.Count ? displayWeights[i - 1] : 1m,
-                ShowWeight = showW,
+                Step        = i,
+                Gap         = i <= existingGapSteps.Count ? existingGapSteps[i - 1] : defaultGap,
+                Weight      = i <= displayWeights.Count ? displayWeights[i - 1] : 1m,
+                ShowWeight  = showW,
+                GapEditable = i != 1,
             };
             row.OnWeightChanged = RecalcAmounts;
             Rows.Add(row);
         }
 
-        // 기존 가중치가 없고 배수/피보나치 모드면 프리셋 채움
-        if (existingWeights.Count == 0 && currentMode != MartinAmountMode.Equal)
+        // 기존 가중치가 없으면 프리셋 채움
+        if (existingWeights.Count == 0)
         {
             var preset = TradeConfig.GeneratePresetWeights(currentMode, martinCount);
             for (int i = 0; i < Rows.Count && i < preset.Count; i++)
@@ -122,13 +131,6 @@ public partial class StepParamsDialog : Window
     }
 
     // ── 모드 전환 ──────────────────────────────────────────
-
-    private void OnModeEqual(object? sender, RoutedEventArgs e)
-    {
-        _currentMode = MartinAmountMode.Equal;
-        ApplyModeUI(_currentMode);
-        RecalcAmounts();
-    }
 
     private void OnModeMultiplier(object? sender, RoutedEventArgs e)
     {
@@ -157,11 +159,9 @@ public partial class StepParamsDialog : Window
         var fgActive   = Brushes.White;
         var fgInactive = this.FindResource("TextSecondary") as IBrush ?? Brushes.Gray;
 
-        BtnModeEqual.Background       = mode == MartinAmountMode.Equal ? accent : inactive;
         BtnModeMultiplier.Background   = mode == MartinAmountMode.Multiplier ? accent : inactive;
         BtnModeFibonacci.Background    = mode == MartinAmountMode.Fibonacci ? accent : inactive;
 
-        BtnModeEqual.Foreground       = mode == MartinAmountMode.Equal ? fgActive : fgInactive;
         BtnModeMultiplier.Foreground   = mode == MartinAmountMode.Multiplier ? fgActive : fgInactive;
         BtnModeFibonacci.Foreground    = mode == MartinAmountMode.Fibonacci ? fgActive : fgInactive;
 
@@ -170,7 +170,7 @@ public partial class StepParamsDialog : Window
         {
             row.ShowWeight    = showW;
             // 배수 모드: 1회차는 기준값이므로 편집 불가
-            row.WeightEditable = !(mode == MartinAmountMode.Multiplier && row.Step == 1);
+            row.WeightEditable = row.Step != 1;
         }
 
         // 헤더 표시
@@ -212,14 +212,13 @@ public partial class StepParamsDialog : Window
 
     private void OnReset(object? sender, RoutedEventArgs e)
     {
-        foreach (var row in Rows)
-            row.Gap = _defaultGap;
-
-        _currentMode = MartinAmountMode.Equal;
-        foreach (var row in Rows)
-            row.Weight = 1m;
-        ApplyModeUI(_currentMode);
-        RecalcAmounts();
+        Close(new StepParamsResult
+        {
+            Confirmed     = true,
+            GapSteps      = new List<decimal>(),
+            AmountWeights = new List<decimal>(),
+            AmountMode    = MartinAmountMode.Equal,
+        });
     }
 
     private void OnConfirm(object? sender, RoutedEventArgs e)

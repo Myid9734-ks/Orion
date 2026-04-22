@@ -494,15 +494,15 @@ public class MainWindowViewModel : ReactiveObject
             MarkUnsaved();
         }
     }
-    public int GptCandleCount
+    public int? GptCandleCount
     {
         get => _gptCandleCount;
-        set { this.RaiseAndSetIfChanged(ref _gptCandleCount, value); MarkUnsaved(); }
+        set { this.RaiseAndSetIfChanged(ref _gptCandleCount, value ?? 30); MarkUnsaved(); }
     }
-    public int GptConfidenceThreshold
+    public int? GptConfidenceThreshold
     {
         get => _gptConfidenceThreshold;
-        set { this.RaiseAndSetIfChanged(ref _gptConfidenceThreshold, value); MarkUnsaved(); }
+        set { this.RaiseAndSetIfChanged(ref _gptConfidenceThreshold, value ?? 60); MarkUnsaved(); }
     }
 
     public bool UseGpt
@@ -519,10 +519,10 @@ public class MainWindowViewModel : ReactiveObject
     /// <summary>GPT 미사용 시 세부 설정 비활성화 (UI 바인딩용)</summary>
     public bool GptSettingsEnabled => _useGpt;
 
-    public int GptAnalysisInterval
+    public int? GptAnalysisInterval
     {
         get => _gptAnalysisInterval;
-        set { this.RaiseAndSetIfChanged(ref _gptAnalysisInterval, value); MarkUnsaved(); }
+        set { this.RaiseAndSetIfChanged(ref _gptAnalysisInterval, value ?? 5); MarkUnsaved(); }
     }
 
     public string TelegramBotToken
@@ -864,10 +864,10 @@ public class MainWindowViewModel : ReactiveObject
             Passphrase             = Passphrase,
             GptApiKey              = GptApiKey,
             GptModel               = GptModel,
-            GptCandleCount         = GptCandleCount,
-            GptConfidenceThreshold = GptConfidenceThreshold,
+            GptCandleCount         = GptCandleCount         ?? 30,
+            GptConfidenceThreshold = GptConfidenceThreshold ?? 60,
             UseGpt                 = UseGpt,
-            GptAnalysisInterval    = GptAnalysisInterval,
+            GptAnalysisInterval    = GptAnalysisInterval    ?? 5,
             TelegramBotToken       = TelegramBotToken,
             TelegramChatId         = TelegramChatId,
             TelegramEnabled        = TelegramEnabled,
@@ -969,10 +969,10 @@ public class MainWindowViewModel : ReactiveObject
         Passphrase             = Passphrase,
         GptApiKey              = GptApiKey,
         GptModel               = GptModel,
-        GptCandleCount         = GptCandleCount,
-        GptConfidenceThreshold = GptConfidenceThreshold,
+        GptCandleCount         = GptCandleCount         ?? 30,
+        GptConfidenceThreshold = GptConfidenceThreshold ?? 60,
         UseGpt                 = UseGpt,
-        GptAnalysisInterval    = GptAnalysisInterval,
+        GptAnalysisInterval    = GptAnalysisInterval    ?? 5,
         TelegramBotToken       = TelegramBotToken,
         TelegramChatId         = TelegramChatId,
         TelegramEnabled        = TelegramEnabled,
@@ -1073,10 +1073,10 @@ public class MainWindowViewModel : ReactiveObject
         Passphrase             = Passphrase,
         GptApiKey              = GptApiKey,
         GptModel               = GptModel,
-        GptCandleCount         = GptCandleCount,
-        GptConfidenceThreshold = GptConfidenceThreshold,
+        GptCandleCount         = GptCandleCount         ?? 30,
+        GptConfidenceThreshold = GptConfidenceThreshold ?? 60,
         UseGpt                 = UseGpt,
-        GptAnalysisInterval    = GptAnalysisInterval,
+        GptAnalysisInterval    = GptAnalysisInterval    ?? 5,
         TelegramBotToken       = TelegramBotToken,
         TelegramChatId         = TelegramChatId,
         TelegramEnabled        = TelegramEnabled,
