@@ -454,6 +454,23 @@ public class TradingCore
 
     private async Task CheckExitConditionsAsync(decimal currentPrice)
     {
+        // 청산가 도달 체크 (모의거래 전용 — 실거래는 OKX 서버가 처리)
+        var liqPrice = _executor.GetLiquidationPrice();
+        if (liqPrice.HasValue)
+        {
+            var liquidated = _position.Direction == TradeDirection.Long
+                ? currentPrice <= liqPrice.Value
+                : currentPrice >= liqPrice.Value;
+
+            if (liquidated)
+            {
+                var modeLabel = _config.MarginModeStr == "cross" ? "교차" : "격리";
+                Log($"💥 강제청산 ({modeLabel} 마진) | 현재가: {currentPrice:N2} | 청산가: {liqPrice.Value:N2}");
+                await ClosePositionAsync(currentPrice, isStopLoss: false, isForceClose: true);
+                return;
+            }
+        }
+
         // 레버리지 포함 수익률(%) — targetProfit / StopLossPercent 와 동일 단위
         var pnlPct = _position.GetUnrealizedPnlPercent(currentPrice) * _config.Leverage;
 

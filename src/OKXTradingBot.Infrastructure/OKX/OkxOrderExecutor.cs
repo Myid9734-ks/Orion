@@ -72,6 +72,9 @@ public class OkxOrderExecutor : IOrderExecutor
     public async Task<decimal> GetBalanceAsync()
         => await _rest.GetBalanceAsync();
 
+    // 실거래는 OKX 서버가 청산 처리 — 시뮬레이션 불필요
+    public decimal? GetLiquidationPrice() => null;
+
     // ── Algo (트리거 / 익절) ──────────────────────────
     public async Task<OrderResult> PlaceTriggerOrderAsync(TriggerOrderRequest request)
     {

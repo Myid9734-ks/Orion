@@ -95,6 +95,7 @@ public class SymbolTabViewModel : ReactiveObject
     private bool             _stopLossEnabled   = false;
     private decimal       _stopLossPercent   = 3.0m;
     private bool          _autoRepeat        = true;
+    private decimal       _accountBalance    = 1000m;
 
     // ── 차트 ──────────────────────────────────────────────────────────
     private string    _selectedBar       = "1D";
@@ -133,6 +134,7 @@ public class SymbolTabViewModel : ReactiveObject
     public ReactiveCommand<Unit, Unit> StartCommand          { get; }
     public ReactiveCommand<Unit, Unit> StopCommand           { get; }
     public ReactiveCommand<Unit, Unit> ClosePositionCommand  { get; }
+    public ReactiveCommand<Unit, Unit> FetchBalanceCommand   { get; }
 
     // ── Observable collections ────────────────────────────────────────
     public ObservableCollection<string>      Logs         { get; } = new();
@@ -163,13 +165,15 @@ public class SymbolTabViewModel : ReactiveObject
         var canStart = this.WhenAnyValue(x => x.IsRunning).Select(r => !r);
         var canStop  = this.WhenAnyValue(x => x.IsRunning);
 
-        StartCommand         = ReactiveCommand.CreateFromTask(StartBotAsync,     canStart);
-        StopCommand          = ReactiveCommand.CreateFromTask(StopBotAsync,      canStop);
-        ClosePositionCommand = ReactiveCommand.CreateFromTask(ClosePositionAsync, canStop);
+        StartCommand         = ReactiveCommand.CreateFromTask(StartBotAsync,      canStart);
+        StopCommand          = ReactiveCommand.CreateFromTask(StopBotAsync,       canStop);
+        ClosePositionCommand = ReactiveCommand.CreateFromTask(ClosePositionAsync,  canStop);
+        FetchBalanceCommand  = ReactiveCommand.CreateFromTask(FetchBalanceAsync);
 
         StartCommand.ThrownExceptions.Subscribe(ex        => AddLog($"[오류] {ex.Message}"));
         StopCommand.ThrownExceptions.Subscribe(ex         => AddLog($"[오류] {ex.Message}"));
         ClosePositionCommand.ThrownExceptions.Subscribe(ex => AddLog($"[오류] {ex.Message}"));
+        FetchBalanceCommand.ThrownExceptions.Subscribe(ex  => AddLog($"[오류] {ex.Message}"));
 
         // 초기 차트 로드
         _ = RestartChartWebSocketAsync();
@@ -267,6 +271,12 @@ public class SymbolTabViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(ExpectedFeeText));
             MarkUnsaved();
         }
+    }
+
+    public decimal? AccountBalance
+    {
+        get => _accountBalance;
+        set => this.RaiseAndSetIfChanged(ref _accountBalance, value ?? 1000m);
     }
 
     public int? Leverage
@@ -725,8 +735,8 @@ public class SymbolTabViewModel : ReactiveObject
         IOrderExecutor executor;
         if (global.IsBacktestMode)
         {
-            executor = new VirtualOrderExecutor(_dataProvider, config.TotalBudget);
-            AddLog($"[가상매매] 가상 잔고 {config.TotalBudget:N2} USDT | 실시간 데이터 + 가상 주문");
+            executor = new VirtualOrderExecutor(_dataProvider, config.TotalBudget, _accountBalance);
+            AddLog($"[가상매매] 가상 잔고 {config.TotalBudget:N2} USDT | 계좌잔고 {_accountBalance:N2} USDT ({config.MarginModeStr} 마진 시뮬레이션)");
         }
         else
         {
@@ -786,6 +796,25 @@ public class SymbolTabViewModel : ReactiveObject
 
         StartPricePolling();
         await _core.StartAsync(AutoRepeat, _cts.Token);
+    }
+
+    private async Task FetchBalanceAsync()
+    {
+        var global = _getGlobalConfig();
+        if (string.IsNullOrEmpty(global.ApiKey)) return;
+
+        try
+        {
+            var rest = new OkxRestClient(global.ApiKey, global.ApiSecret, global.Passphrase,
+                           NullLogger<OkxRestClient>.Instance);
+            var balance = await rest.GetBalanceAsync();
+            AccountBalance = balance;
+            AddLog($"[잔고 조회] {balance:N2} USDT");
+        }
+        catch (Exception ex)
+        {
+            AddLog($"[잔고 조회 실패] {ex.Message}");
+        }
     }
 
     private async Task StopBotAsync()

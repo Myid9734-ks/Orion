@@ -21,6 +21,12 @@ public interface IOrderExecutor
     /// <summary>잔고 조회 (USDT)</summary>
     Task<decimal> GetBalanceAsync();
 
+    /// <summary>
+    /// 현재 포지션의 청산가 반환 (모의거래 전용 — 실거래는 null).
+    /// 마진 모드(교차/격리)와 계좌잔고를 반영한 시뮬레이션 값.
+    /// </summary>
+    decimal? GetLiquidationPrice();
+
     // ── 서버 사이드 예약 주문 (실거래 전용) ─────────────
     /// <summary>
     /// true = 마틴 N단계 진입 트리거 + 익절 주문을 OKX 서버에 등록할 수 있다.

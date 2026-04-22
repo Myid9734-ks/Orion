@@ -14,6 +14,8 @@ public class VirtualOrderExecutor : IOrderExecutor
     private readonly IDataProvider _dataProvider;
     private decimal _virtualBalance;
     private decimal _initialBalance;
+    private decimal _accountBalance;   // 총 계좌잔고 (교차 마진 청산가 계산용)
+    private string  _marginMode = "cross";
 
     // 현재 열린 포지션 추적 (가상 잔고 반영용)
     private decimal _openPositionAmount  = 0;
@@ -21,11 +23,12 @@ public class VirtualOrderExecutor : IOrderExecutor
     private TradeDirection _openDirection = TradeDirection.Long;
     private int _leverage = 10;
 
-    public VirtualOrderExecutor(IDataProvider dataProvider, decimal initialBalance = 1000m)
+    public VirtualOrderExecutor(IDataProvider dataProvider, decimal initialBalance = 1000m, decimal accountBalance = 0m)
     {
         _dataProvider   = dataProvider;
         _virtualBalance = initialBalance;
         _initialBalance = initialBalance;
+        _accountBalance = accountBalance > 0 ? accountBalance : initialBalance;
     }
 
     /// <summary>현재 가상 잔고</summary>
@@ -120,8 +123,33 @@ public class VirtualOrderExecutor : IOrderExecutor
 
     public Task<bool> SetLeverageAsync(string symbol, int leverage, string marginMode)
     {
-        _leverage = leverage;
+        _leverage   = leverage;
+        _marginMode = marginMode.ToLower();
         return Task.FromResult(true);
+    }
+
+    /// <summary>
+    /// 현재 포지션의 예상 청산가.
+    /// 격리: 포지션 증거금만으로 계산. 교차: 전체 계좌잔고 기준으로 계산.
+    /// </summary>
+    public decimal? GetLiquidationPrice()
+    {
+        if (_openPositionAmount <= 0 || _openPositionEntry <= 0) return null;
+
+        if (_marginMode == "isolated")
+        {
+            return _openDirection == TradeDirection.Long
+                ? _openPositionEntry * (1 - 1m / _leverage)
+                : _openPositionEntry * (1 + 1m / _leverage);
+        }
+        else // cross
+        {
+            // 전체 계좌잔고가 손실을 다 흡수했을 때 청산
+            var liq = _openDirection == TradeDirection.Long
+                ? _openPositionEntry * (1 - _accountBalance / _openPositionAmount)
+                : _openPositionEntry * (1 + _accountBalance / _openPositionAmount);
+            return liq > 0 ? liq : null; // 계좌잔고 > 포지션 규모면 사실상 청산 없음
+        }
     }
 
     public Task<decimal> GetBalanceAsync()
