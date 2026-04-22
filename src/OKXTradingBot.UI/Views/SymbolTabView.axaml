@@ -176,7 +176,7 @@
                 <StackPanel Grid.Column="1" Spacing="1">
                   <NumericUpDown Value="{Binding TotalBudget}"
                                  Minimum="10" Maximum="1000000" Increment="100"
-                                 FormatString="F2" FontSize="12"/>
+                                 FormatString="F0" FontSize="12"/>
                   <TextBlock Text="{Binding TotalBudgetKrwText}"
                              FontSize="10" Foreground="{DynamicResource AccentColor}"
                              Opacity="0.8" HorizontalAlignment="Right"
@@ -191,7 +191,7 @@
                 <StackPanel Grid.Column="1" Spacing="1">
                   <NumericUpDown Value="{Binding AccountBalance}"
                                  Minimum="0" Maximum="100000000" Increment="100"
-                                 FormatString="F2" FontSize="12"/>
+                                 FormatString="F0" FontSize="12"/>
                   <TextBlock Text="{Binding AccountBalanceKrwText}"
                              FontSize="10" Foreground="{DynamicResource AccentColor}"
                              Opacity="0.8" HorizontalAlignment="Right"
