@@ -96,6 +96,7 @@ public class SymbolTabViewModel : ReactiveObject
     private decimal       _stopLossPercent   = 3.0m;
     private bool          _autoRepeat        = true;
     private decimal       _accountBalance    = 1000m;
+    private decimal       _usdKrwRate        = 0m;    // 0 = 아직 미조회
 
     // ── 차트 ──────────────────────────────────────────────────────────
     private string    _selectedBar       = "1D";
@@ -180,6 +181,9 @@ public class SymbolTabViewModel : ReactiveObject
 
         // DB에서 이전 거래 기록 로드
         _ = Task.Run(LoadTradeHistoryFromDb);
+
+        // USD/KRW 환율 조회
+        _ = FetchExchangeRateAsync();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -269,6 +273,7 @@ public class SymbolTabViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(TotalPositionText));
             this.RaisePropertyChanged(nameof(ExpectedProfitText));
             this.RaisePropertyChanged(nameof(ExpectedFeeText));
+            this.RaisePropertyChanged(nameof(TotalBudgetKrwText));
             MarkUnsaved();
         }
     }
@@ -276,8 +281,28 @@ public class SymbolTabViewModel : ReactiveObject
     public decimal? AccountBalance
     {
         get => _accountBalance;
-        set => this.RaiseAndSetIfChanged(ref _accountBalance, value ?? 1000m);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _accountBalance, value ?? 1000m);
+            this.RaisePropertyChanged(nameof(AccountBalanceKrwText));
+        }
     }
+
+    public decimal UsdKrwRate
+    {
+        get => _usdKrwRate;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _usdKrwRate, value);
+            this.RaisePropertyChanged(nameof(ExchangeRateText));
+            this.RaisePropertyChanged(nameof(TotalBudgetKrwText));
+            this.RaisePropertyChanged(nameof(AccountBalanceKrwText));
+        }
+    }
+
+    public string ExchangeRateText    => _usdKrwRate > 0 ? $"1 USD = ₩{_usdKrwRate:N0}" : "환율 조회 중...";
+    public string TotalBudgetKrwText  => _usdKrwRate > 0 ? $"≈ ₩{_totalBudget * _usdKrwRate:N0}" : "";
+    public string AccountBalanceKrwText => _usdKrwRate > 0 ? $"≈ ₩{_accountBalance * _usdKrwRate:N0}" : "";
 
     public int? Leverage
     {
@@ -796,6 +821,20 @@ public class SymbolTabViewModel : ReactiveObject
 
         StartPricePolling();
         await _core.StartAsync(AutoRepeat, _cts.Token);
+    }
+
+    private static readonly HttpClient _httpClient = new();
+
+    private async Task FetchExchangeRateAsync()
+    {
+        try
+        {
+            var json = await _httpClient.GetStringAsync("https://api.frankfurter.app/latest?from=USD&to=KRW");
+            var doc  = System.Text.Json.JsonDocument.Parse(json);
+            var rate = doc.RootElement.GetProperty("rates").GetProperty("KRW").GetDecimal();
+            UsdKrwRate = rate;
+        }
+        catch { /* 조회 실패 시 무시 */ }
     }
 
     private async Task FetchBalanceAsync()

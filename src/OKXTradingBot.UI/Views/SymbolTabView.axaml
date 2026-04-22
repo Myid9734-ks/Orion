@@ -164,23 +164,39 @@
                           Click="OnMarginModeIsolated"/>
                 </Grid>
               </Grid>
+              <!-- 환율 표시 -->
+              <TextBlock Text="{Binding ExchangeRateText}"
+                         FontSize="10" Foreground="{DynamicResource TextSecondary}"
+                         Opacity="0.6" HorizontalAlignment="Right"/>
               <!-- 투자금 -->
               <Grid ColumnDefinitions="Auto,*">
                 <TextBlock Text="투자금(USDT)" MinWidth="75" FontSize="11"
                            Foreground="{DynamicResource TextSecondary}"
                            VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <NumericUpDown Grid.Column="1" Value="{Binding TotalBudget}"
-                               Minimum="10" Maximum="1000000" Increment="100"
-                               FormatString="F2" FontSize="12"/>
+                <StackPanel Grid.Column="1" Spacing="1">
+                  <NumericUpDown Value="{Binding TotalBudget}"
+                                 Minimum="10" Maximum="1000000" Increment="100"
+                                 FormatString="F2" FontSize="12"/>
+                  <TextBlock Text="{Binding TotalBudgetKrwText}"
+                             FontSize="10" Foreground="{DynamicResource AccentColor}"
+                             Opacity="0.8" HorizontalAlignment="Right"
+                             IsVisible="{Binding TotalBudgetKrwText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                </StackPanel>
               </Grid>
               <!-- 계좌잔고 -->
               <Grid ColumnDefinitions="Auto,*,6,Auto">
                 <TextBlock Text="계좌잔고(USDT)" MinWidth="75" FontSize="11"
                            Foreground="{DynamicResource TextSecondary}"
                            VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <NumericUpDown Grid.Column="1" Value="{Binding AccountBalance}"
-                               Minimum="0" Maximum="100000000" Increment="100"
-                               FormatString="F2" FontSize="12"/>
+                <StackPanel Grid.Column="1" Spacing="1">
+                  <NumericUpDown Value="{Binding AccountBalance}"
+                                 Minimum="0" Maximum="100000000" Increment="100"
+                                 FormatString="F2" FontSize="12"/>
+                  <TextBlock Text="{Binding AccountBalanceKrwText}"
+                             FontSize="10" Foreground="{DynamicResource AccentColor}"
+                             Opacity="0.8" HorizontalAlignment="Right"
+                             IsVisible="{Binding AccountBalanceKrwText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                </StackPanel>
                 <Button Grid.Column="3"
                         Content="↻"
                         Command="{Binding FetchBalanceCommand}"
