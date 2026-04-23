@@ -25,6 +25,8 @@ public class TradingCore
     private readonly ILogger<TradingCore> _logger;
     private readonly Action<string>? _logFileSink; // 로그 파일 저장용 콜백
 
+    private const decimal TakerFeeRate = 0.0005m; // OKX VIP0 Taker 0.05%
+
     private Position _position = new();
     private bool     _running  = false;
     private bool     _autoRepeat = false;
@@ -737,12 +739,16 @@ public class TradingCore
         var pnlPct   = pricePct * _config.Leverage;                      // 레버리지 포함 수익률 (로그·이벤트용)
         var pnlAmt   = _position.TotalAmount * pricePct / 100 * _config.Leverage;
 
+        // 수수료 차감: 진입(들) + 청산 각 Taker 0.05% (명목금액 기준)
+        var fee      = _position.TotalAmount * _config.Leverage * TakerFeeRate * 2;
+        var pnlNet   = pnlAmt - fee;
+
         _position.Status      = PositionStatus.Closed;
         _position.ClosedAt    = DateTime.UtcNow;
-        _position.RealizedPnl = pnlAmt;
+        _position.RealizedPnl = pnlNet;
 
         _cycleCount++;
-        _sessionPnl += pnlAmt;
+        _sessionPnl += pnlNet;
 
         OnTradeClosed?.Invoke(this, new TradeClosedEventArgs
         {
@@ -754,7 +760,7 @@ public class TradingCore
             MartinStep    = _position.MartinStep,
             MartinMax     = _config.MartinCount,
             PnlPercent    = pnlPct,
-            PnlAmount     = pnlAmt,
+            PnlAmount     = pnlNet,
             IsStopLoss    = isStopLoss,
             Leverage      = _config.Leverage,
             OpenedAt      = _position.OpenedAt,
@@ -763,7 +769,7 @@ public class TradingCore
 
         var emoji     = isStopLoss ? "🛑" : "✅";
         var typeLabel = isStopLoss ? "손절" : "익절";
-        Log($"{emoji} [pre-orders] {typeLabel} 청산 완료 | {pnlPct:+0.00;-0.00}% ({pnlAmt:+0.00;-0.00} USDT) | " +
+        Log($"{emoji} [pre-orders] {typeLabel} 청산 완료 | {pnlPct:+0.00;-0.00}% ({pnlAmt:+0.00;-0.00} USDT) | 수수료: -{fee:F2} USDT | 순손익: {pnlNet:+0.00;-0.00} USDT | " +
             $"마틴 {_position.MartinStep}/{_config.MartinCount} | 사이클 #{_cycleCount} | 세션: {_sessionPnl:+0.00;-0.00}");
 
         await NotifyAsync(
@@ -771,6 +777,8 @@ public class TradingCore
             $"심볼: {_config.Symbol}\n" +
             $"수익률: {pnlPct:+0.00;-0.00}%\n" +
             $"손익: {pnlAmt:+0.00;-0.00} USDT\n" +
+            $"수수료: -{fee:F2} USDT\n" +
+            $"순손익: {pnlNet:+0.00;-0.00} USDT\n" +
             $"마틴: {_position.MartinStep}/{_config.MartinCount}\n" +
             $"사이클: #{_cycleCount}\n" +
             $"세션 누적: {_sessionPnl:+0.00;-0.00} USDT",
@@ -925,12 +933,16 @@ public class TradingCore
         var pnlPct   = pricePct * _config.Leverage;                      // 레버리지 포함 수익률 (로그·이벤트용)
         var pnlAmt   = _position.TotalAmount * pricePct / 100 * _config.Leverage;
 
+        // 수수료 차감: 진입(들) + 청산 각 Taker 0.05% (명목금액 기준)
+        var fee      = _position.TotalAmount * _config.Leverage * TakerFeeRate * 2;
+        var pnlNet   = pnlAmt - fee;
+
         _position.Status      = PositionStatus.Closed;
         _position.ClosedAt    = DateTime.UtcNow;
-        _position.RealizedPnl = pnlAmt;
+        _position.RealizedPnl = pnlNet;
 
         _cycleCount++;
-        _sessionPnl += pnlAmt;
+        _sessionPnl += pnlNet;
 
         // 거래 완료 이벤트 발행
         OnTradeClosed?.Invoke(this, new TradeClosedEventArgs
@@ -943,7 +955,7 @@ public class TradingCore
             MartinStep    = _position.MartinStep,
             MartinMax     = _config.MartinCount,
             PnlPercent    = pnlPct,
-            PnlAmount     = pnlAmt,
+            PnlAmount     = pnlNet,
             IsStopLoss    = isStopLoss,
             Leverage      = _config.Leverage,
             OpenedAt      = _position.OpenedAt,
@@ -953,7 +965,7 @@ public class TradingCore
         // 로그 + 알림
         var emoji     = isStopLoss ? "🛑" : isForceClose ? "🔴" : "✅";
         var typeLabel = isStopLoss ? "손절" : isForceClose ? "강제청산" : "익절";
-        var logMsg    = $"{emoji} {typeLabel} | {pnlPct:+0.00;-0.00}% ({pnlAmt:+0.00;-0.00} USDT) | " +
+        var logMsg    = $"{emoji} {typeLabel} | {pnlPct:+0.00;-0.00}% ({pnlAmt:+0.00;-0.00} USDT) | 수수료: -{fee:F2} USDT | 순손익: {pnlNet:+0.00;-0.00} USDT | " +
                         $"마틴 {_position.MartinStep}/{_config.MartinCount} | " +
                         $"사이클 #{_cycleCount} | 세션 누적: {_sessionPnl:+0.00;-0.00} USDT";
         Log(logMsg);
@@ -963,7 +975,9 @@ public class TradingCore
             $"{emoji} <b>{typeLabel} 청산</b>\n" +
             $"심볼: {_config.Symbol}\n" +
             $"수익률: {pnlPct:+0.00;-0.00}%\n" +
-            $"손익: {pnlAmt:+0.00;-0.00} USDT\n" +
+            $"손익(gross): {pnlAmt:+0.00;-0.00} USDT\n" +
+            $"수수료: -{fee:F2} USDT\n" +
+            $"순손익: {pnlNet:+0.00;-0.00} USDT\n" +
             $"마틴: {_position.MartinStep}/{_config.MartinCount}\n" +
             $"사이클: #{_cycleCount}\n" +
             $"세션 누적: {_sessionPnl:+0.00;-0.00} USDT",

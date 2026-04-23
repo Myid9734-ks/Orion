@@ -694,8 +694,8 @@ public class SymbolTabViewModel : ReactiveObject
             ? $"${TotalBudget * Leverage * TargetProfit / 100m:N2}" : "-";
 
     public string ExpectedFeeText =>
-        TotalBudget > 0 && MartinCount > 0
-            ? $"${TotalBudget * 0.0005m * MartinCount:N2}" : "-";
+        TotalBudget > 0 && MartinCount > 0 && Leverage > 0
+            ? $"${TotalBudget * (Leverage ?? 1) * 0.0005m * 2:N2}" : "-"; // 진입+청산 Taker 0.05% × 레버리지
 
     // ═══════════════════════════════════════════════════════════════════
     // 차트 설정
