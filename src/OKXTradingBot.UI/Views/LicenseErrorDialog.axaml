@@ -1,0 +1,113 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="OKXTradingBot.UI.Views.LicenseErrorDialog"
+        Title="라이센스 인증"
+        Width="560" Height="620"
+        WindowStartupLocation="CenterScreen"
+        CanResize="False"
+        SystemDecorations="BorderOnly"
+        Background="#1E1E2E">
+
+  <Border Padding="22" CornerRadius="10"
+          Background="#1E1E2E"
+          BorderBrush="#3A3A5C" BorderThickness="1">
+    <ScrollViewer>
+      <StackPanel Spacing="12">
+
+        <!-- 타이틀 -->
+        <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Center">
+          <TextBlock Text="🔒" FontSize="24" VerticalAlignment="Center"/>
+          <TextBlock Text="라이센스 인증 실패"
+                     FontSize="15" FontWeight="Bold"
+                     Foreground="#FF5555"
+                     VerticalAlignment="Center"/>
+        </StackPanel>
+
+        <!-- 사유 -->
+        <Border Background="#2A2A3E" CornerRadius="6" Padding="14,10">
+          <TextBlock x:Name="ReasonText"
+                     TextWrapping="Wrap" FontSize="12" Foreground="#CCCCDD"
+                     LineHeight="20"/>
+        </Border>
+
+        <!-- 머신 ID -->
+        <Border Background="#2A2A3E" CornerRadius="6" Padding="14,10">
+          <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+            <TextBlock Grid.Row="0" Grid.Column="0"
+                       Text="머신 ID" FontSize="11" Foreground="#888899"/>
+            <Button Grid.Row="0" Grid.Column="1" Grid.RowSpan="2"
+                    Content="복사" Click="OnCopyMachineId"
+                    Background="#3A3A5C" Foreground="#CCCCDD"
+                    FontSize="11" Padding="12,4" CornerRadius="4"
+                    VerticalAlignment="Center"/>
+            <SelectableTextBlock Grid.Row="1" Grid.Column="0"
+                                 x:Name="MachineIdText"
+                                 FontSize="15" FontFamily="Menlo, Consolas, monospace"
+                                 Foreground="#80D4FF" FontWeight="Bold"
+                                 Margin="0,2,0,0"/>
+          </Grid>
+        </Border>
+
+        <TextBlock Text="위 머신 ID를 판매자에게 전달하여 라이센스를 발급받은 후, 아래 두 가지 방법 중 하나로 등록하세요."
+                   FontSize="11" Foreground="#AAAACC" TextWrapping="Wrap"/>
+
+        <!-- 구분선 -->
+        <Border Height="1" Background="#3A3A5C" Margin="0,4"/>
+
+        <!-- 방법 1: 키 붙여넣기 -->
+        <TextBlock Text="방법 1) 라이센스 키 붙여넣기"
+                   FontSize="13" FontWeight="Bold" Foreground="#DDDDEE"/>
+
+        <TextBox x:Name="KeyInput"
+                 Watermark="판매자에게 받은 라이센스 키를 여기에 붙여넣기 (Cmd+V / Ctrl+V)"
+                 AcceptsReturn="True" TextWrapping="Wrap"
+                 Height="90" FontSize="11"
+                 FontFamily="Menlo, Consolas, monospace"
+                 Background="#2A2A3E" Foreground="#CCCCDD"
+                 BorderBrush="#3A3A5C" BorderThickness="1"
+                 CornerRadius="6" Padding="10,8"/>
+
+        <Button Content="키 등록"
+                Click="OnRegisterKey"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"
+                Background="#4A90E2" Foreground="White"
+                FontWeight="Bold" FontSize="13"
+                Padding="0,10" CornerRadius="6"/>
+
+        <!-- 구분선 -->
+        <Border Height="1" Background="#3A3A5C" Margin="0,4"/>
+
+        <!-- 방법 2: 파일 선택 -->
+        <TextBlock Text="방법 2) 라이센스 파일(license.dat) 선택"
+                   FontSize="13" FontWeight="Bold" Foreground="#DDDDEE"/>
+
+        <Button Content="📁 license.dat 파일 선택"
+                Click="OnSelectFile"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"
+                Background="#3A3A5C" Foreground="#CCCCDD"
+                FontSize="13"
+                Padding="0,10" CornerRadius="6"/>
+
+        <!-- 상태 메시지 -->
+        <Border x:Name="StatusBox"
+                Background="#3E2A2A" CornerRadius="6" Padding="12,8"
+                IsVisible="False">
+          <TextBlock x:Name="StatusText"
+                     FontSize="11" Foreground="#FFAAAA"
+                     TextWrapping="Wrap"/>
+        </Border>
+
+        <!-- 종료 -->
+        <Button Content="종료"
+                Click="OnExit"
+                HorizontalAlignment="Right"
+                Background="#D84545" Foreground="White"
+                FontSize="12" Padding="24,8" CornerRadius="6"
+                Margin="0,6,0,0"/>
+
+      </StackPanel>
+    </ScrollViewer>
+  </Border>
+</Window>

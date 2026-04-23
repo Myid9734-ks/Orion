@@ -10,6 +10,10 @@ obj/
 # Encrypted settings (contains API keys)
 ~/.okxtradingbot/
 
+# 라이센스 서명용 개인키 (절대 커밋 금지!) / 발급된 라이센스 파일
+keys/private.pem
+*.dat
+
 # Rider / VS
 .idea/
 .vs/

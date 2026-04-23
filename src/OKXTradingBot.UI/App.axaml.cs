@@ -4,6 +4,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
+using OKXTradingBot.UI.Services;
 using OKXTradingBot.UI.Views;
 using ReactiveUI;
 
@@ -25,8 +26,38 @@ public partial class App : Application
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.MainWindow = new MainWindow();
-            desktop.ShutdownRequested += (_, _) => WriteAppLog("앱 종료");
+            var licenseResult = LicenseGuard.Check();
+            if (!licenseResult.IsValid)
+            {
+                WriteAppLog($"라이센스 인증 실패: {licenseResult.Status} ({licenseResult.ErrorDetail})");
+                var dialog = new LicenseErrorDialog(
+                    licenseResult,
+                    LicenseGuard.GetCurrentMachineId(),
+                    LicenseGuard.LicensePath);
+                desktop.MainWindow = dialog;
+                dialog.Closed += (_, _) =>
+                {
+                    if (dialog.LicenseRegistered)
+                    {
+                        WriteAppLog("라이센스 등록 완료, 메인 윈도우로 전환");
+                        var main = new MainWindow();
+                        desktop.MainWindow = main;
+                        main.Show();
+                        desktop.ShutdownRequested += (_, _) => WriteAppLog("앱 종료");
+                    }
+                    else
+                    {
+                        WriteAppLog("라이센스 미등록, 앱 종료");
+                        desktop.Shutdown(1);
+                    }
+                };
+            }
+            else
+            {
+                WriteAppLog($"라이센스 인증 성공: {licenseResult.Payload?.Owner}");
+                desktop.MainWindow = new MainWindow();
+                desktop.ShutdownRequested += (_, _) => WriteAppLog("앱 종료");
+            }
         }
         base.OnFrameworkInitializationCompleted();
     }
