@@ -118,6 +118,7 @@ public class OkxRestClient
     {
         // side: buy / sell
         // posSide: long / short (양방향 포지션 모드 기준)
+        // tgtCcy=quote_ccy: sz를 계약 수가 아닌 USDT 금액으로 해석하도록 명시
         var body = JsonSerializer.Serialize(new
         {
             instId,
@@ -125,26 +126,77 @@ public class OkxRestClient
             side,
             posSide,
             ordType = "market",
-            sz      = sz.ToString("F4")
+            sz      = sz.ToString("F4"),
+            tgtCcy  = "quote_ccy"
         });
 
+        _logger.LogInformation("[🔍TEST-1] 시장가 주문 요청: {body}", body);
         var json   = await PostPrivateAsync("/api/v5/trade/order", body);
+        _logger.LogInformation("[🔍TEST-1] 시장가 주문 응답: {json}", json);
+
         var doc    = JsonDocument.Parse(json);
         var result = doc.RootElement.GetProperty("data")[0];
         var code   = doc.RootElement.GetProperty("code").GetString();
 
         if (code != "0")
         {
-            var msg = result.GetProperty("sMsg").GetString();
-            _logger.LogError("주문 실패: {msg}", msg);
-            return new OrderResult { Success = false, ErrorMessage = msg };
+            var sCode = result.TryGetProperty("sCode", out var sc) ? sc.GetString() : code;
+            var sMsg  = result.TryGetProperty("sMsg",  out var sm) ? sm.GetString() : "unknown";
+            _logger.LogError("[🔍TEST-1] 주문 실패: [{sCode}] {sMsg}", sCode, sMsg);
+            return new OrderResult { Success = false, ErrorMessage = $"[{sCode}] {sMsg}" };
         }
+
+        var ordId = result.GetProperty("ordId").GetString()!;
+        _logger.LogInformation("[🔍TEST-1] 주문 성공: ordId={ordId}", ordId);
+
+        // 체결 상세 조회 (fillPx 확인)
+        var filled = await QueryOrderFillAsync(instId, ordId);
+        _logger.LogInformation("[🔍TEST-1] 체결 상세: fillPx={px} fillSz={sz} state={st}",
+            filled.FilledPrice, filled.FilledSize, filled.State);
 
         return new OrderResult
         {
-            Success = true,
-            OrderId = result.GetProperty("ordId").GetString()!
+            Success      = true,
+            OrderId      = ordId,
+            FilledPrice  = filled.FilledPrice,
+            FilledSize   = filled.FilledSize
         };
+    }
+
+    /// <summary>주문 체결 상세 조회 — PlaceMarketOrderAsync 직후 fillPx 확인용</summary>
+    private async Task<OrderResult> QueryOrderFillAsync(string instId, string ordId)
+    {
+        try
+        {
+            // 시장가 주문은 보통 즉시 체결되나 최대 2회 재시도
+            for (int i = 0; i < 3; i++)
+            {
+                var json = await GetPrivateAsync($"/api/v5/trade/order?instId={instId}&ordId={ordId}");
+                var doc  = JsonDocument.Parse(json);
+                if (!doc.RootElement.TryGetProperty("data", out var data) || data.GetArrayLength() == 0)
+                    continue;
+
+                var item   = data[0];
+                var state  = item.TryGetProperty("state",  out var st) ? st.GetString() : "";
+                var fillPx = item.TryGetProperty("fillPx", out var fp) ? fp.GetString() : "0";
+                var fillSz = item.TryGetProperty("fillSz", out var fs) ? fs.GetString() : "0";
+                var accFillSz = item.TryGetProperty("accFillSz", out var af) ? af.GetString() : "0";
+
+                decimal.TryParse(fillPx,    out var px);
+                decimal.TryParse(fillSz,    out var sz);
+                decimal.TryParse(accFillSz, out var accSz);
+
+                if (state == "filled" || state == "partially_filled")
+                    return new OrderResult { FilledPrice = px, FilledSize = accSz, State = state };
+
+                await Task.Delay(300);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("[🔍TEST-1] 체결 상세 조회 실패: {msg}", ex.Message);
+        }
+        return new OrderResult { State = "unknown" };
     }
 
     /// <summary>전체 포지션 청산 (시장가)</summary>
@@ -177,6 +229,8 @@ public class OkxRestClient
         decimal sz, decimal triggerPx, string mgnMode = "cross",
         bool reduceOnly = false)
     {
+        // tgtCcy=quote_ccy: sz를 계약 수가 아닌 USDT 금액으로 해석
+        // 시장가 주문(PlaceMarketOrderAsync)과 동일한 단위 사용 필수
         var body = JsonSerializer.Serialize(new
         {
             instId,
@@ -185,15 +239,16 @@ public class OkxRestClient
             posSide,
             ordType       = "trigger",
             sz            = sz.ToString("F4"),
+            tgtCcy        = "quote_ccy",
             triggerPx     = triggerPx.ToString("F4"),
             orderPx       = "-1",      // -1 = market on trigger
             triggerPxType = "last",
             reduceOnly    = reduceOnly ? "true" : "false"
         });
 
-        _logger.LogDebug("[ALGO TRIGGER REQ] {body}", body);
+        _logger.LogInformation("[🔍TEST-2] 트리거 주문 요청: {body}", body);
         var json = await PostPrivateAsync("/api/v5/trade/order-algo", body);
-        _logger.LogDebug("[ALGO TRIGGER RES] {json}", json);
+        _logger.LogInformation("[🔍TEST-2] 트리거 주문 응답: {json}", json);
 
         return ParseAlgoResponse(json, $"trigger@{triggerPx}");
     }
@@ -220,9 +275,9 @@ public class OkxRestClient
             reduceOnly    = "true"
         });
 
-        _logger.LogDebug("[ALGO TP REQ] {body}", body);
+        _logger.LogInformation("[🔍TEST-4] TP 주문 요청: {body}", body);
         var json = await PostPrivateAsync("/api/v5/trade/order-algo", body);
-        _logger.LogDebug("[ALGO TP RES] {json}", json);
+        _logger.LogInformation("[🔍TEST-4] TP 주문 응답: {json}", json);
 
         return ParseAlgoResponse(json, $"tp@{tpTriggerPx}");
     }
@@ -353,6 +408,49 @@ public class OkxRestClient
         return result;
     }
 
+    /// <summary>
+    /// 최근 체결/취소된 algo 주문 히스토리 조회 (재시작 누락 복구용).
+    /// state: "effective" (발동 후 본주문 생성됨) / "canceled" / "order_failed"
+    /// </summary>
+    public async Task<List<AlgoOrderInfo>> GetAlgoOrderHistoryAsync(string instId, int limit = 50)
+    {
+        var result = new List<AlgoOrderInfo>();
+
+        foreach (var ordType in new[] { "trigger", "conditional" })
+        {
+            var json = await GetPrivateAsync(
+                $"/api/v5/trade/orders-algo-history?ordType={ordType}&state=effective&instId={instId}&limit={limit}");
+            var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("data", out var data)) continue;
+
+            foreach (var item in data.EnumerateArray())
+            {
+                var algoId = item.TryGetProperty("algoId", out var ai) ? ai.GetString() ?? "" : "";
+                var reduceOnly = item.TryGetProperty("reduceOnly", out var ro) && ro.GetString() == "true";
+
+                decimal triggerPx = 0, tpTriggerPx = 0;
+                if (ordType == "trigger")
+                    decimal.TryParse(item.TryGetProperty("triggerPx",   out var tp)  ? tp.GetString()  : "0", out triggerPx);
+                else
+                    decimal.TryParse(item.TryGetProperty("tpTriggerPx", out var ttp) ? ttp.GetString() : "0", out tpTriggerPx);
+
+                long.TryParse(item.TryGetProperty("uTime", out var ut) ? ut.GetString() : "0", out var uTimeMs);
+
+                result.Add(new AlgoOrderInfo
+                {
+                    AlgoId       = algoId,
+                    OrdType      = ordType,
+                    TriggerPx    = triggerPx,
+                    TpTriggerPx  = tpTriggerPx,
+                    IsClose      = reduceOnly,
+                    UpdatedAtMs  = uTimeMs
+                });
+            }
+        }
+
+        return result;
+    }
+
     private OrderResult ParseAlgoResponse(string json, string tag)
     {
         var doc    = JsonDocument.Parse(json);
@@ -361,21 +459,26 @@ public class OkxRestClient
 
         if (code != "0" || data.GetArrayLength() == 0)
         {
-            var msg = data.GetArrayLength() > 0
-                ? data[0].TryGetProperty("sMsg", out var m) ? m.GetString() : "unknown"
-                : "empty data";
-            _logger.LogError("[ALGO {tag}] 실패: code={code} msg={msg}", tag, code, msg);
+            // sCode + sMsg 모두 포함해 원인 진단 가능하게
+            string msg;
+            if (data.GetArrayLength() > 0)
+            {
+                var sCode = data[0].TryGetProperty("sCode", out var sc) ? sc.GetString() : code;
+                var sMsg  = data[0].TryGetProperty("sMsg",  out var sm) ? sm.GetString() : "unknown";
+                msg = $"[{sCode}] {sMsg}";
+            }
+            else
+            {
+                msg = $"[{code}] empty data";
+            }
+            _logger.LogError("[ALGO {tag}] 실패: {msg} | raw={json}", tag, msg, json);
             return new OrderResult { Success = false, ErrorMessage = msg };
         }
 
         var algoId = data[0].GetProperty("algoId").GetString()!;
         _logger.LogInformation("[ALGO {tag}] 등록 성공: algoId={algoId}", tag, algoId);
 
-        return new OrderResult
-        {
-            Success = true,
-            OrderId = algoId  // algoId 를 OrderId 필드에 저장
-        };
+        return new OrderResult { Success = true, OrderId = algoId };
     }
 
     // ─────────────────────────────────────────────

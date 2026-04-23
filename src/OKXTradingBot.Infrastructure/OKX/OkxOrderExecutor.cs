@@ -19,6 +19,7 @@ public class OkxOrderExecutor : IOrderExecutor
     public bool SupportsServerSidePreOrders => true;
 
     public event EventHandler<AlgoOrderFillEvent>? OnAlgoOrderFilled;
+    public event EventHandler?                     OnStreamReconnected;
 
     public OkxOrderExecutor(
         OkxRestClient rest,
@@ -35,6 +36,13 @@ public class OkxOrderExecutor : IOrderExecutor
                 e.AlgoId, e.Direction, e.FilledSize, e.FilledPrice, e.IsClose);
             try { OnAlgoOrderFilled?.Invoke(this, e); }
             catch (Exception ex) { _logger.LogError(ex, "[Executor] AlgoFill 핸들러 예외"); }
+        };
+
+        _privWs.OnReconnected += (s, _) =>
+        {
+            _logger.LogInformation("[Executor] PrivWS 재연결 감지 → OnStreamReconnected 발사");
+            try { OnStreamReconnected?.Invoke(this, EventArgs.Empty); }
+            catch (Exception ex) { _logger.LogError(ex, "[Executor] Reconnect 핸들러 예외"); }
         };
     }
 
@@ -137,6 +145,12 @@ public class OkxOrderExecutor : IOrderExecutor
     {
         _logger.LogInformation("[Executor] 미체결 algo 주문 조회: {symbol}", symbol);
         return await _rest.GetOpenAlgoOrdersAsync(symbol);
+    }
+
+    public async Task<List<AlgoOrderInfo>> GetAlgoOrderHistoryAsync(string symbol, int limit = 50)
+    {
+        _logger.LogInformation("[Executor] algo 히스토리 조회: {symbol} limit={n}", symbol, limit);
+        return await _rest.GetAlgoOrderHistoryAsync(symbol, limit);
     }
 
     public async Task StartPrivateStreamAsync(CancellationToken ct)

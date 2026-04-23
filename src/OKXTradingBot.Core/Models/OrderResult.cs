@@ -17,10 +17,12 @@ public class OrderRequest
 
 public class OrderResult
 {
-    public bool    Success   { get; set; }
-    public string  OrderId   { get; set; } = string.Empty;
+    public bool    Success      { get; set; }
+    public string  OrderId      { get; set; } = string.Empty;
     public decimal FilledPrice  { get; set; }
     public decimal FilledAmount { get; set; }
+    public decimal FilledSize   { get; set; } // 계약 수 (디버깅용)
+    public string? State        { get; set; } // 주문 상태 (filled / partially_filled 등)
     public string? ErrorMessage { get; set; }
     public DateTime Timestamp   { get; set; } = DateTime.UtcNow;
 }

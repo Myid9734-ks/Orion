@@ -164,6 +164,12 @@ public class VirtualOrderExecutor : IOrderExecutor
         remove { /* no-op */ }
     }
 
+    public event EventHandler? OnStreamReconnected
+    {
+        add    { /* no-op */ }
+        remove { /* no-op */ }
+    }
+
     public Task<OrderResult> PlaceTriggerOrderAsync(TriggerOrderRequest request)
         => Task.FromResult(new OrderResult { Success = false, ErrorMessage = "Virtual: trigger 미지원" });
 
@@ -181,5 +187,8 @@ public class VirtualOrderExecutor : IOrderExecutor
         => Task.FromResult<ExchangePositionInfo?>(null);
 
     public Task<List<AlgoOrderInfo>> GetOpenAlgoOrdersAsync(string symbol)
+        => Task.FromResult(new List<AlgoOrderInfo>());
+
+    public Task<List<AlgoOrderInfo>> GetAlgoOrderHistoryAsync(string symbol, int limit = 50)
         => Task.FromResult(new List<AlgoOrderInfo>());
 }

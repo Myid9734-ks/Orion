@@ -83,26 +83,23 @@ public class GptAnalyzer : IGptAnalyzer
     {
         var sb = new StringBuilder();
 
-        // 최신 캔들 기준 통계 계산
-        var recent   = candles.TakeLast(candles.Count).ToList();
-        var lastClose = recent.Last().Close;
-        var first     = recent.First().Close;
-        var highMax   = recent.Max(c => c.High);
-        var lowMin    = recent.Min(c => c.Low);
-        var avgVol    = recent.Average(c => (double)c.Volume);
+        var lastClose = candles.Last().Close;
+        var first     = candles.First().Close;
+        var highMax   = candles.Max(c => c.High);
+        var lowMin    = candles.Min(c => c.Low);
+        var avgVol    = candles.Average(c => (double)c.Volume);
         var pct       = (lastClose - first) / first * 100;
 
-        // 캔들 데이터를 CSV 형식으로 (최근 20개만, 토큰 절약)
-        var displayCandles = recent.TakeLast(Math.Min(20, recent.Count)).ToList();
+        // 토큰 절약: 전달된 캔들 수 그대로 사용 (GptCandleCount 설정 반영)
         sb.AppendLine("OHLCV data (1-minute candles, oldest → newest):");
         sb.AppendLine("Time(UTC), Open, High, Low, Close, Volume");
-        foreach (var c in displayCandles)
+        foreach (var c in candles)
         {
             sb.AppendLine($"{c.Timestamp:HH:mm}, {c.Open}, {c.High}, {c.Low}, {c.Close}, {c.Volume:F2}");
         }
 
         sb.AppendLine();
-        sb.AppendLine($"Summary ({recent.Count} candles):");
+        sb.AppendLine($"Summary ({candles.Count} candles):");
         sb.AppendLine($"- Price change: {pct:+0.00;-0.00}%");
         sb.AppendLine($"- High: {highMax:N2}, Low: {lowMin:N2}");
         sb.AppendLine($"- Current: {lastClose:N2}");
@@ -144,8 +141,16 @@ public class GptAnalyzer : IGptAnalyzer
 
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogError("OpenAI API 오류 {code}: {body}", response.StatusCode, json);
-            throw new Exception($"OpenAI API 오류: {response.StatusCode}");
+            var statusCode = (int)response.StatusCode;
+            var hint = statusCode switch
+            {
+                401 => "API 키 오류",
+                429 => "Rate Limit 초과 — 잠시 후 재시도",
+                500 or 503 => "OpenAI 서버 일시 오류",
+                _   => "알 수 없는 오류"
+            };
+            _logger.LogError("OpenAI API 오류 {code} ({hint}): {body}", statusCode, hint, json);
+            throw new Exception($"OpenAI API {statusCode} ({hint})");
         }
 
         // choices[0].message.content 추출
@@ -176,15 +181,33 @@ public class GptAnalyzer : IGptAnalyzer
         var root = doc.RootElement;
 
         var directionStr = root.TryGetProperty("direction", out var d) ? d.GetString() ?? "" : "";
-        var confidence   = root.TryGetProperty("confidence", out var c) ? c.GetInt32() : 0;
-        var reason       = root.TryGetProperty("reason",     out var r) ? r.GetString() ?? "" : "";
+        var reason       = root.TryGetProperty("reason",    out var r) ? r.GetString() ?? "" : "";
 
-        var direction = directionStr.ToLower() switch
+        // confidence: 숫자 또는 문자열 모두 허용 (GPT 응답 형식 불일치 방어)
+        int confidence = 0;
+        if (root.TryGetProperty("confidence", out var c))
         {
-            "long"  => TradeDirection.Long,
-            "short" => TradeDirection.Short,
-            _       => throw new Exception($"알 수 없는 방향: {directionStr}")
-        };
+            if (c.ValueKind == JsonValueKind.Number)
+                confidence = c.GetInt32();
+            else if (c.ValueKind == JsonValueKind.String)
+                int.TryParse(c.GetString(), out confidence);
+        }
+
+        // "neutral" 등 예상 외 방향 → 오류가 아닌 신뢰도 0으로 처리 (스킵)
+        var dirLower = directionStr.ToLower().Trim();
+        if (dirLower != "long" && dirLower != "short")
+        {
+            _logger.LogInformation("GPT 방향 미확정: '{dir}' — 신뢰도 0으로 처리 (스킵)", directionStr);
+            return new GptAnalysisResult
+            {
+                Direction  = TradeDirection.Long, // 기본값 (어차피 ShouldEnter=false)
+                Confidence = 0,
+                Reason     = $"방향 미확정: {directionStr}",
+                AnalyzedAt = DateTime.UtcNow
+            };
+        }
+
+        var direction = dirLower == "long" ? TradeDirection.Long : TradeDirection.Short;
 
         _logger.LogInformation("GPT 분석 결과: {dir} {conf}% — {reason}",
             direction, confidence, reason);

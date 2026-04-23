@@ -37,6 +37,11 @@ public class OkxPrivateWebSocketClient : IAsyncDisposable
     /// <summary>raw 메시지 (디버그용)</summary>
     public event EventHandler<string>? OnRawMessage;
 
+    /// <summary>재연결 후 구독 확인 완료 시 발사 (WS 끊김 구간 누락 이벤트 복구용)</summary>
+    public event EventHandler? OnReconnected;
+
+    private bool _isReconnecting = false;
+
     public OkxPrivateWebSocketClient(
         string apiKey, string apiSecret, string passphrase,
         ILogger<OkxPrivateWebSocketClient> logger)
@@ -200,6 +205,15 @@ public class OkxPrivateWebSocketClient : IAsyncDisposable
                 {
                     var arg = root.TryGetProperty("arg", out var a) ? a.ToString() : "?";
                     _logger.LogInformation("[PrivWS] 구독 확인: {arg}", arg);
+
+                    // 재연결 후 첫 구독 확인 → 누락 이벤트 복구 신호
+                    if (_isReconnecting)
+                    {
+                        _isReconnecting = false;
+                        _logger.LogInformation("[PrivWS] 재연결 완료 — OnReconnected 발사");
+                        try { OnReconnected?.Invoke(this, EventArgs.Empty); }
+                        catch (Exception ex) { _logger.LogError(ex, "[PrivWS] Reconnect 핸들러 예외"); }
+                    }
                 }
                 else if (evStr == "error")
                 {
@@ -234,12 +248,27 @@ public class OkxPrivateWebSocketClient : IAsyncDisposable
         var algoId   = item.TryGetProperty("algoId", out var a) ? a.GetString() : "";
         var ordType  = item.TryGetProperty("ordType", out var o) ? o.GetString() : "";
         var posSide  = item.TryGetProperty("posSide", out var p) ? p.GetString() : "";
+        var triggerPx = item.TryGetProperty("triggerPx", out var tp) ? tp.GetString() : "";
+        var sz       = item.TryGetProperty("sz", out var sz_) ? sz_.GetString() : "";
 
-        _logger.LogInformation("[PrivWS] orders-algo 업데이트: algoId={id} type={t} state={s} posSide={ps}",
-            algoId, ordType, state, posSide);
+        // state: "live"(등록) / "effective"(발동) / "canceled" / "order_failed"
+        var stateLabel = state switch
+        {
+            "live"         => "✅ 등록됨",
+            "effective"    => "🔥 발동됨",
+            "canceled"     => "🚫 취소됨",
+            "order_failed" => "❌ 주문실패",
+            _              => state
+        };
 
-        // state: "live" (등록), "effective" (발동→일반주문 생성), "canceled", "order_failed"
-        // 실제 체결 정보는 'orders' 채널에서 전달됨
+        _logger.LogInformation(
+            "[🔍TEST-2/3] orders-algo: algoId={id} type={t} state={st} posSide={ps} triggerPx={tp} sz={sz}",
+            algoId, ordType, stateLabel, posSide, triggerPx, sz);
+
+        if (state == "effective")
+            _logger.LogInformation("[🔍TEST-3] ⚡ 마틴 트리거 발동! algoId={id} — orders 채널에서 체결 확인 대기", algoId);
+        if (state == "order_failed")
+            _logger.LogError("[🔍TEST-3] ❌ 트리거 주문 실패: algoId={id} | 전체 raw: {raw}", algoId, item.ToString());
     }
 
     private void HandleOrderUpdate(JsonElement item)
@@ -254,8 +283,16 @@ public class OkxPrivateWebSocketClient : IAsyncDisposable
         var instId   = item.TryGetProperty("instId", out var ii) ? ii.GetString() : "";
         var reduceOnly = item.TryGetProperty("reduceOnly", out var ro) && ro.GetString() == "true";
 
-        _logger.LogInformation("[PrivWS] orders 업데이트: ordId={oid} algoId={aid} state={st} side={sd} posSide={ps} fillPx={fp} fillSz={fs} reduceOnly={ro}",
+        _logger.LogInformation(
+            "[🔍TEST-3/4] orders: ordId={oid} algoId={aid} state={st} side={sd} posSide={ps} fillPx={fp} fillSz={fs} reduceOnly={ro}",
             ordId, algoId, state, side, posSide, fillPx, fillSz, reduceOnly);
+
+        if (state == "filled")
+        {
+            var label = reduceOnly ? "[🔍TEST-4] ✅ 익절 체결" : "[🔍TEST-3] ✅ 마틴 체결";
+            _logger.LogInformation("{label}: fillPx={px} fillSz={sz} algoId={aid}",
+                label, fillPx, fillSz, algoId);
+        }
 
         // filled 상태일 때만 이벤트 발사
         if (state != "filled" && state != "partially_filled") return;
@@ -293,9 +330,10 @@ public class OkxPrivateWebSocketClient : IAsyncDisposable
         _ws       = new ClientWebSocket();
         _ws.Options.RemoteCertificateValidationCallback = (_, _, _, _) => true;
         _loggedIn = false;
+        _isReconnecting = true;  // subscribe 확인 응답에서 OnReconnected 발사 트리거
 
         await _ws.ConnectAsync(new Uri(WsPrivate), ct);
-        _logger.LogInformation("[PrivWS] 재연결 완료 — 재로그인");
+        _logger.LogInformation("[PrivWS] 재연결 완료 — 재로그인 (구독 복구 후 OnReconnected 발사 예정)");
         await LoginAsync();
         // SubscribeAsync는 login 성공 이벤트 후 자동 호출됨
     }

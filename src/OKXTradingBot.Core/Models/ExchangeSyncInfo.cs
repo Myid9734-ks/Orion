@@ -19,4 +19,5 @@ public class AlgoOrderInfo
     public decimal TriggerPx   { get; set; }        // trigger 주문용
     public decimal TpTriggerPx { get; set; }        // conditional TP 주문용
     public bool    IsClose     { get; set; }        // true = 익절(reduceOnly)
+    public long    UpdatedAtMs { get; set; }        // 히스토리 조회 시 uTime (ms)
 }

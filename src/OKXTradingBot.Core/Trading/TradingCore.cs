@@ -32,7 +32,8 @@ public class TradingCore
     private bool     _autoRepeat = false;
     private int      _cycleCount = 0;        // 완료된 사이클 수
     private decimal  _sessionPnl = 0;        // 세션 누적 손익
-    private readonly object _lock = new();   // 동시 캔들 처리 방지
+    private readonly object _lock = new();              // 경량 상태 보호용 (running 플래그 등)
+    private readonly SemaphoreSlim _candleSem = new(1, 1); // 캔들 처리 직렬화 — 이중 진입 방지
 
     // ── Pre-orders 모드 (실거래) 전용 ─────────────
     private readonly List<string> _activeAlgoIds = new(); // 등록된 마틴 트리거 algoId
@@ -98,6 +99,7 @@ public class TradingCore
         if (_preOrderMode)
         {
             _executor.OnAlgoOrderFilled += OnAlgoOrderFilledHandler;
+            _executor.OnStreamReconnected += OnStreamReconnectedHandler;
             _logger.LogInformation("[TradingCore] Pre-orders 모드 활성화 (서버 사이드 트리거)");
         }
         else
@@ -248,18 +250,16 @@ public class TradingCore
     {
         if (!_running) return;
 
-        // 동시 처리 방지 (이전 캔들 처리 중 새 캔들 도착 시)
-        bool entered = false;
-        lock (_lock)
+        // 이전 캔들 처리 완료 전 새 캔들 도착 시 건너뜀 (이중 진입 방지)
+        if (!await _candleSem.WaitAsync(0))
         {
-            if (!_running) return;
-            entered = true;
+            Log($"⏭ 캔들 건너뜀 — 이전 캔들 처리 중 ({candle.Timestamp:HH:mm:ss})");
+            return;
         }
-
-        if (!entered) return;
 
         try
         {
+            if (!_running) return;
             var currentPrice = candle.Close;
 
             switch (_position.Status)
@@ -300,6 +300,10 @@ public class TradingCore
             _logger.LogError(ex, "캔들 처리 중 오류");
             Log($"⚠️ 오류: {ex.Message}");
             await NotifyAsync($"⚠️ <b>오류 발생</b>\n{ex.Message}", NotificationType.Error);
+        }
+        finally
+        {
+            _candleSem.Release();
         }
     }
 
@@ -388,6 +392,13 @@ public class TradingCore
                 // 기준가와 동일 — 다음 캔들 대기
                 return;
             }
+        }
+
+        // ── 신규 진입 직전: 거래소에 잔여 포지션/algo 없는지 최종 확인 ──
+        if (!await EnsureCleanStateForNewCycleAsync())
+        {
+            Log("⏸ 신규 진입 중단 — 거래소 상태 정합성 확인 필요 (다음 캔들에서 재시도)");
+            return;
         }
 
         await EnterAsync(direction, latestCandle.Close, isFirstEntry: true);
@@ -506,13 +517,127 @@ public class TradingCore
 
         // 레버리지 포함 수익률(%) — StopLossPercent 와 동일 단위
         var pnlPct = _position.GetUnrealizedPnlPercent(currentPrice) * _config.Leverage;
-        if (pnlPct <= -_config.StopLossPercent)
-        {
-            Log($"🛑 [pre-orders] 손절 조건 충족: {pnlPct:F2}% ≤ -{_config.StopLossPercent}% (마틴 {_position.MartinStep}/{_config.MartinCount} 완료)");
+        if (pnlPct > -_config.StopLossPercent) return;
 
-            // 모든 algo 취소 후 시장가 청산
-            await CancelAllPreOrdersAsync();
-            await ClosePositionAsync(currentPrice, isStopLoss: true);
+        Log($"🛑 [pre-orders] 손절 조건 충족: {pnlPct:F2}% ≤ -{_config.StopLossPercent}% (마틴 {_position.MartinStep}/{_config.MartinCount} 완료)");
+
+        // ── 안전 손절 절차 ──
+        // 1) TP 먼저 명시적 취소 → 경합 체결(TP와 SL 동시 실행) 방지
+        if (!string.IsNullOrEmpty(_activeTpAlgoId))
+        {
+            bool tpCanceled = false;
+            try
+            {
+                tpCanceled = await _executor.CancelAlgoOrderAsync(_config.Symbol, _activeTpAlgoId);
+            }
+            catch (Exception ex)
+            {
+                Log($"⚠️ TP 취소 예외: {ex.Message}");
+            }
+
+            if (!tpCanceled)
+            {
+                // 취소 실패 — TP가 이미 체결됐을 가능성 → 포지션 조회로 확정
+                Log($"⚠️ TP 취소 실패 — 포지션 잔존 여부 확인");
+                var verifyPos = await SafeGetPositionAsync();
+                if (verifyPos == null)
+                {
+                    Log("ℹ️ 포지션 없음 — TP가 선행 체결됨. 손절 취소 후 서버 청산으로 마무리");
+                    _activeTpAlgoId = null;
+                    try { await _executor.CancelAllAlgoOrdersAsync(_config.Symbol); } catch { }
+                    _activeAlgoIds.Clear();
+                    await FinalizeClosedFromServerAsync(currentPrice, isStopLoss: false);
+                    return;
+                }
+                // 포지션 남아있음 → 재시도
+                try { await _executor.CancelAlgoOrderAsync(_config.Symbol, _activeTpAlgoId); } catch { }
+            }
+            _activeTpAlgoId = null;
+        }
+
+        // 2) 마틴 트리거 일괄 취소
+        try
+        {
+            await _executor.CancelAllAlgoOrdersAsync(_config.Symbol);
+        }
+        catch (Exception ex)
+        {
+            Log($"⚠️ 트리거 일괄 취소 실패 (계속 진행): {ex.Message}");
+        }
+        _activeAlgoIds.Clear();
+
+        // 3) 포지션 재확인 — 이 사이에 TP가 체결됐을 가능성
+        var pos = await SafeGetPositionAsync();
+        if (pos == null)
+        {
+            Log("ℹ️ 청산 직전 포지션 조회 → 이미 없음 (TP 선행 체결로 판단). Finalize만 수행");
+            await FinalizeClosedFromServerAsync(currentPrice, isStopLoss: false);
+            return;
+        }
+
+        // 4) 시장가 청산
+        await ClosePositionAsync(currentPrice, isStopLoss: true);
+    }
+
+    /// <summary>예외를 삼키고 포지션 조회 (SL 경합 방지 목적).</summary>
+    private async Task<ExchangePositionInfo?> SafeGetPositionAsync()
+    {
+        try { return await _executor.GetPositionAsync(_config.Symbol); }
+        catch (Exception ex) { Log($"⚠️ 포지션 조회 실패: {ex.Message}"); return null; }
+    }
+
+    /// <summary>
+    /// 신규 사이클 진입 전 거래소 상태 검증.
+    /// - 잔여 포지션 있음 → 동기화 필요 (false 반환)
+    /// - 잔여 algo 주문 있음 → 일괄 취소 후 진행
+    /// 이전 사이클 청산 요청이 부분적으로 실패해 좀비 주문이 남은 경우를 방어.
+    /// </summary>
+    private async Task<bool> EnsureCleanStateForNewCycleAsync()
+    {
+        if (!_preOrderMode) return true;
+
+        try
+        {
+            // 1) 거래소 포지션 확인 — 있으면 진입 차단 후 상태 복원
+            var pos = await _executor.GetPositionAsync(_config.Symbol);
+            if (pos != null)
+            {
+                Log($"⚠️ 사전 검증: 거래소에 잔여 포지션 감지 ({pos.Direction} 평균가 {pos.AvgEntryPrice:N4}, {pos.NotionalUsd:F2}USDT)");
+                Log($"   → 인메모리 상태 재동기화 수행 (신규 진입 건너뜀)");
+                await TrySyncPositionFromExchangeAsync();
+                return false;
+            }
+
+            // 2) 잔여 algo 주문 확인 → 있으면 전부 취소
+            var algos = await _executor.GetOpenAlgoOrdersAsync(_config.Symbol);
+            if (algos.Count > 0)
+            {
+                Log($"🧹 사전 검증: 잔여 algo 주문 {algos.Count}건 감지 → 일괄 취소 후 진입");
+                var ok = await _executor.CancelAllAlgoOrdersAsync(_config.Symbol);
+                if (!ok)
+                {
+                    Log("⚠️ 일괄 취소 실패 — 신규 진입 건너뜀 (다음 캔들 재시도)");
+                    return false;
+                }
+                _activeAlgoIds.Clear();
+                _activeTpAlgoId = null;
+
+                // 취소 반영 대기 후 재확인
+                await Task.Delay(500);
+                var remaining = await _executor.GetOpenAlgoOrdersAsync(_config.Symbol);
+                if (remaining.Count > 0)
+                {
+                    Log($"⚠️ 취소 후에도 잔여 {remaining.Count}건 — 신규 진입 건너뜀");
+                    return false;
+                }
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log($"⚠️ 사전 검증 실패: {ex.Message} — 안전을 위해 신규 진입 보류");
+            return false;
         }
     }
 
@@ -533,6 +658,7 @@ public class TradingCore
         decimal cumQty       = _position.TotalAmount;
         decimal cumAvgPrice  = _position.AvgEntryPrice;
         decimal lastEntryPx  = _position.LastEntryPrice;
+        var failedSteps      = new List<int>();
 
         for (int step = _position.MartinStep + 1; step <= _config.MartinCount; step++)
         {
@@ -564,12 +690,14 @@ public class TradingCore
                 }
                 else
                 {
-                    Log($"  ⚠️ 마틴{step} 트리거 등록 실패: {res.ErrorMessage}");
+                    Log($"  ❌ 마틴{step} 트리거 등록 실패: {res.ErrorMessage}");
+                    failedSteps.Add(step);
                 }
             }
             catch (Exception ex)
             {
                 Log($"  ❌ 마틴{step} 트리거 예외: {ex.Message}");
+                failedSteps.Add(step);
             }
 
             // 다음 단계 lastEntryPx/avgPrice 추정 (실제 체결 시 갱신됨)
@@ -578,8 +706,38 @@ public class TradingCore
             lastEntryPx = triggerPrice;
         }
 
+        // 일부 단계 등록 실패 → 전략 불완전
+        // 포지션은 유지 (이미 수익 중일 수 있음 — 강제 청산 금지)
+        // 등록된 트리거만 취소 → 봇 중단 → 사용자가 수동 결정
+        if (failedSteps.Count > 0)
+        {
+            var failMsg = $"🚨 마틴 트리거 등록 실패 (단계: {string.Join(", ", failedSteps)}) — 부분 등록 취소 후 봇 중단. 포지션은 유지됨 — 수동 처리 필요.";
+            Log(failMsg);
+            await NotifyAsync(
+                $"🚨 <b>마틴 트리거 등록 실패</b>\n" +
+                $"심볼: {_config.Symbol}\n" +
+                $"실패 단계: {string.Join(", ", failedSteps)}\n" +
+                $"⚠️ 포지션 유지 중 — 수동으로 익절/손절 처리 필요\n" +
+                $"봇은 중단됩니다.",
+                NotificationType.Error);
+
+            // 이미 등록된 트리거 주문 취소 (불완전한 마틴 주문 잔류 방지)
+            try { await _executor.CancelAllAlgoOrdersAsync(_config.Symbol); }
+            catch (Exception ex) { Log($"  ⚠️ 부분 취소 실패: {ex.Message}"); }
+            _activeAlgoIds.Clear();
+
+            _running = false;
+            return;
+        }
+
         // 2) 익절 conditional (현재 평균가 기준)
         await RegisterTakeProfitAsync();
+
+        // ── [🔍TEST-2] 등록 완료 요약 ──
+        Log($"[🔍TEST-2] 예비주문 등록 완료 요약:");
+        Log($"  트리거 {_activeAlgoIds.Count}건: [{string.Join(", ", _activeAlgoIds)}]");
+        Log($"  TP algoId: {(_activeTpAlgoId ?? "없음")}");
+        Log($"  → OKX 앱 '알고 주문' 탭에서 {_activeAlgoIds.Count + (_activeTpAlgoId != null ? 1 : 0)}건 확인 필요");
     }
 
     /// <summary>현재 평균가 + targetProfit% 기준 TP conditional 등록 (기존 TP 있으면 취소 후 재등록)</summary>
@@ -649,6 +807,91 @@ public class TradingCore
     // Private WS → Algo 체결 알림 핸들러
     // ═════════════════════════════════════════════
 
+    // ═════════════════════════════════════════════
+    // Private WS 재연결 → 누락 이벤트 복구
+    // ═════════════════════════════════════════════
+    private DateTime _lastSyncAt = DateTime.MinValue;
+
+    private async void OnStreamReconnectedHandler(object? sender, EventArgs e)
+    {
+        if (!_running) return;
+
+        try
+        {
+            Log("🔄 WS 재연결 감지 — 누락 이벤트 복구 동기화 시작");
+
+            // 1) 현재 거래소 포지션 조회
+            var pos = await _executor.GetPositionAsync(_config.Symbol);
+
+            // 2) 인메모리 Open이었는데 거래소 포지션 없음 → TP 체결 누락
+            if (_position.Status == PositionStatus.Open && pos == null)
+            {
+                Log("ℹ️ WS 끊김 구간에 포지션 청산 감지 — 히스토리로 체결가 복원");
+                var exitPrice = await ResolveMissedExitPriceAsync();
+                await CancelAllPreOrdersAsync();
+                await FinalizeClosedFromServerAsync(exitPrice, isStopLoss: false);
+                return;
+            }
+
+            // 3) 인메모리 Open + 거래소 포지션 있음 → 마틴 추가 체결 가능성
+            if (_position.Status == PositionStatus.Open && pos != null)
+            {
+                var newStep = EstimateMartinStepFromNotional(pos.NotionalUsd);
+                if (newStep.HasValue && newStep.Value > _position.MartinStep)
+                {
+                    Log($"ℹ️ WS 끊김 구간에 마틴 {_position.MartinStep}→{newStep.Value}단계 체결 감지 — 포지션 갱신");
+                    _position.MartinStep     = newStep.Value;
+                    _position.TotalAmount    = pos.NotionalUsd / _config.Leverage;
+                    _position.AvgEntryPrice  = pos.AvgEntryPrice;
+                    _position.LastEntryPrice = pos.AvgEntryPrice;
+
+                    // 미체결 algo 재조회 → _activeAlgoIds 재구성
+                    var algos = await _executor.GetOpenAlgoOrdersAsync(_config.Symbol);
+                    _activeAlgoIds.Clear();
+                    foreach (var a in algos.Where(x => !x.IsClose))
+                        _activeAlgoIds.Add(a.AlgoId);
+                    _activeTpAlgoId = algos.FirstOrDefault(x => x.IsClose)?.AlgoId;
+
+                    // 평균가 변경 시 TP 재등록 (기존 TP가 없으면)
+                    if (string.IsNullOrEmpty(_activeTpAlgoId))
+                        await RegisterTakeProfitAsync();
+
+                    OnPositionUpdated?.Invoke(this, _position);
+                }
+            }
+
+            _lastSyncAt = DateTime.UtcNow;
+            Log("✅ 재연결 동기화 완료");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "재연결 동기화 중 오류");
+            Log($"⚠️ 재연결 동기화 실패: {ex.Message}");
+        }
+    }
+
+    /// <summary>WS 누락 구간에 체결된 TP 가격을 algo 히스토리에서 복원 (실패 시 현재가 사용)</summary>
+    private async Task<decimal> ResolveMissedExitPriceAsync()
+    {
+        try
+        {
+            var history = await _executor.GetAlgoOrderHistoryAsync(_config.Symbol, 20);
+            var recentTp = history
+                .Where(h => h.IsClose && h.TpTriggerPx > 0)
+                .OrderByDescending(h => h.UpdatedAtMs)
+                .FirstOrDefault();
+            if (recentTp != null && recentTp.TpTriggerPx > 0)
+            {
+                Log($"   ↳ 히스토리에서 TP trigger 가격 복원: {recentTp.TpTriggerPx:N4} (algoId={recentTp.AlgoId})");
+                return recentTp.TpTriggerPx;
+            }
+        }
+        catch (Exception ex) { Log($"   ⚠️ TP 히스토리 조회 실패: {ex.Message}"); }
+
+        try { return await _data.GetCurrentPriceAsync(); }
+        catch { return _position.AvgEntryPrice; }
+    }
+
     private async void OnAlgoOrderFilledHandler(object? sender, AlgoOrderFillEvent e)
     {
         if (!_running) return;
@@ -681,6 +924,7 @@ public class TradingCore
             Log($"⚠️ 포지션 미오픈 상태에서 마틴 체결 수신 (무시): algoId={e.AlgoId}");
             return;
         }
+        Log($"[🔍TEST-3] 마틴 체결 처리 시작: algoId={e.AlgoId} fillPx={e.FilledPrice:N4} fillSz={e.FilledSize} notional={e.NotionalUsd:F2}USDT");
 
         // 체결가 기반 평균가 재계산
         // 명목 USDT 금액 추정: FilledSize × FilledPrice (계약수 기반이면 정확하지 않을 수 있음 → 보수적 처리)
@@ -724,6 +968,7 @@ public class TradingCore
             Log("⚠️ 포지션 미오픈 상태에서 TP 체결 수신 (무시)");
             return;
         }
+        Log($"[🔍TEST-4] 익절 체결 처리 시작: exitPrice={exitPrice:N4} | 평균가={_position.AvgEntryPrice:N4} | 누적={_position.TotalAmount:F2}USDT");
 
         // 잔여 마틴 트리거 모두 취소
         await CancelAllPreOrdersAsync();
@@ -740,7 +985,8 @@ public class TradingCore
         var pnlAmt   = _position.TotalAmount * pricePct / 100 * _config.Leverage;
 
         // 수수료 차감: 진입(들) + 청산 각 Taker 0.05% (명목금액 기준)
-        var fee      = _position.TotalAmount * _config.Leverage * TakerFeeRate * 2;
+        // 수수료: 선물은 명목가(투자금) 기준 — 레버리지는 이미 pnlAmt 계산에서 반영됨
+        var fee      = _position.TotalAmount * TakerFeeRate * 2;
         var pnlNet   = pnlAmt - fee;
 
         _position.Status      = PositionStatus.Closed;
@@ -833,8 +1079,12 @@ public class TradingCore
             return;
         }
 
-        // 체결가: OrderResult에서 반환된 값 우선, 없으면 캔들 Close
+        // 체결가: OrderResult에서 반환된 값(API 조회) 우선, 없으면 캔들 Close
         var filledPrice = result.FilledPrice > 0 ? result.FilledPrice : price;
+        if (result.FilledPrice <= 0)
+            Log($"[🔍TEST-1] ⚠️ 체결가 API 미반환 — 캔들 종가 대체 사용: {price:N4} (실제 체결가와 다를 수 있음)");
+        else
+            Log($"[🔍TEST-1] 체결가 확인: {filledPrice:N4} | 계약수: {result.FilledSize} | 상태: {result.State}");
 
         // 포지션 업데이트
         if (isFirstEntry)
@@ -933,8 +1183,8 @@ public class TradingCore
         var pnlPct   = pricePct * _config.Leverage;                      // 레버리지 포함 수익률 (로그·이벤트용)
         var pnlAmt   = _position.TotalAmount * pricePct / 100 * _config.Leverage;
 
-        // 수수료 차감: 진입(들) + 청산 각 Taker 0.05% (명목금액 기준)
-        var fee      = _position.TotalAmount * _config.Leverage * TakerFeeRate * 2;
+        // 수수료: 선물은 명목가(투자금) 기준 — 레버리지는 이미 pnlAmt 계산에서 반영됨
+        var fee      = _position.TotalAmount * TakerFeeRate * 2;
         var pnlNet   = pnlAmt - fee;
 
         _position.Status      = PositionStatus.Closed;
@@ -1027,6 +1277,8 @@ public class TradingCore
             var pos = await _executor.GetPositionAsync(_config.Symbol);
             if (pos == null)
             {
+                // 포지션은 없지만 앱 꺼진 동안 TP가 체결됐을 수 있음 → 최근 히스토리 확인
+                await CheckMissedTpOnStartupAsync();
                 Log("🔍 재시작 동기화: 거래소에 열린 포지션 없음 — 새 사이클 시작");
                 return false;
             }
@@ -1036,8 +1288,18 @@ public class TradingCore
             var triggerOrders = algoOrders.Where(a => !a.IsClose).ToList();
             var tpOrder       = algoOrders.FirstOrDefault(a => a.IsClose);
 
-            // 마틴 단계 추정: 전체 마틴 수 - 남은 트리거 수
-            var martinStep = Math.Max(1, _config.MartinCount - triggerOrders.Count);
+            // ── 마틴 단계 정밀 추정 ──
+            // 1순위: 실제 포지션 명목가를 각 단계 누적 금액과 매칭
+            // 2순위: 남은 트리거 개수로 역산 (백업)
+            var martinStep = EstimateMartinStepFromNotional(pos.NotionalUsd)
+                             ?? Math.Max(1, _config.MartinCount - triggerOrders.Count);
+
+            // 트리거 개수와 notional 추정 결과가 불일치 → 경고
+            var stepByTriggers = Math.Max(1, _config.MartinCount - triggerOrders.Count);
+            if (martinStep != stepByTriggers)
+            {
+                Log($"⚠️ 마틴 단계 추정 불일치: notional={martinStep}, triggers={stepByTriggers} — notional 우선 채택");
+            }
 
             _position = new Position
             {
@@ -1082,9 +1344,77 @@ public class TradingCore
         }
     }
 
+    /// <summary>
+    /// 앱 꺼진 동안 TP가 발동되었는지 최근 algo 히스토리로 확인.
+    /// DB 레코드 자동 생성은 불가 (평균가/진입시각 등 상세 정보 부재) — 사용자에게 알림.
+    /// 최근 24시간 이내 effective 상태 conditional 주문이 있으면 경고.
+    /// </summary>
+    private async Task CheckMissedTpOnStartupAsync()
+    {
+        try
+        {
+            var history = await _executor.GetAlgoOrderHistoryAsync(_config.Symbol, 20);
+            var cutoffMs = DateTimeOffset.UtcNow.AddHours(-24).ToUnixTimeMilliseconds();
+            var recentTps = history
+                .Where(h => h.IsClose && h.UpdatedAtMs >= cutoffMs)
+                .OrderByDescending(h => h.UpdatedAtMs)
+                .ToList();
+
+            if (recentTps.Count == 0) return;
+
+            var latest = recentTps[0];
+            var when = DateTimeOffset.FromUnixTimeMilliseconds(latest.UpdatedAtMs).LocalDateTime;
+            Log($"⚠️ 앱 종료 기간 중 익절 체결 감지: 최근 {recentTps.Count}건 | 마지막: {when:yyyy-MM-dd HH:mm} @ {latest.TpTriggerPx:N4}");
+            Log($"   ↳ DB 기록 누락 가능성 — OKX 거래 내역에서 직접 확인 권장");
+
+            await NotifyAsync(
+                $"ℹ️ <b>앱 종료 기간 TP 체결 감지</b>\n" +
+                $"심볼: {_config.Symbol}\n" +
+                $"최근 24h 익절 발동: {recentTps.Count}건\n" +
+                $"마지막 발동: {when:MM-dd HH:mm} @ {latest.TpTriggerPx:N4}\n" +
+                $"→ DB 기록 누락 가능, OKX 거래 내역 확인 필요",
+                NotificationType.BotStartStop);
+        }
+        catch (Exception ex)
+        {
+            Log($"⚠️ 누락 TP 확인 실패: {ex.Message}");
+        }
+    }
+
     // ═════════════════════════════════════════════
     // 헬퍼
     // ═════════════════════════════════════════════
+
+    /// <summary>
+    /// 실제 포지션 명목가를 1단계부터의 누적 금액과 매칭해 마틴 단계를 추정.
+    /// 레버리지 적용 후의 notional을 1단계 amount × leverage 단위로 분해.
+    /// 오차 허용: ±3% (마틴 복리 체결 슬리피지 고려)
+    /// </summary>
+    private int? EstimateMartinStepFromNotional(decimal actualNotional)
+    {
+        if (actualNotional <= 0) return null;
+
+        // 누적 투자금 × 레버리지 = 명목가
+        decimal cumInvest = 0;
+        int bestStep = 0;
+        decimal bestDiff = decimal.MaxValue;
+
+        for (int s = 1; s <= _config.MartinCount; s++)
+        {
+            cumInvest += _config.GetAmountForStep(s);
+            var expectedNotional = cumInvest * _config.Leverage;
+            var diffPct = Math.Abs(actualNotional - expectedNotional) / expectedNotional * 100;
+
+            if (diffPct < bestDiff)
+            {
+                bestDiff = diffPct;
+                bestStep = s;
+            }
+        }
+
+        // 최소 오차가 3% 이내일 때만 신뢰
+        return bestDiff <= 3m ? bestStep : (int?)null;
+    }
 
     /// <summary>
     /// 연속 스킵 횟수에 따른 적응형 GPT 분석 간격 반환

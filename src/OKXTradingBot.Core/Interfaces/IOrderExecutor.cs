@@ -54,8 +54,14 @@ public interface IOrderExecutor
     /// <summary>미체결 algo 주문 목록 조회 (재시작 동기화용)</summary>
     Task<List<AlgoOrderInfo>> GetOpenAlgoOrdersAsync(string symbol);
 
+    /// <summary>최근 발동/취소된 algo 주문 히스토리 (WS 누락 복구용). effective 상태만 반환.</summary>
+    Task<List<AlgoOrderInfo>> GetAlgoOrderHistoryAsync(string symbol, int limit = 50);
+
     /// <summary>algo 주문 체결/발동 이벤트 (Private WS).</summary>
     event EventHandler<AlgoOrderFillEvent>? OnAlgoOrderFilled;
+
+    /// <summary>Private WS 재연결 완료 이벤트 — 구독자는 누락 이벤트 복구를 수행해야 함.</summary>
+    event EventHandler? OnStreamReconnected;
 
     /// <summary>Private WS 시작 (실거래 모드 진입 시 1회)</summary>
     Task StartPrivateStreamAsync(CancellationToken ct);
