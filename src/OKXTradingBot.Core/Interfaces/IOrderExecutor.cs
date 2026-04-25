@@ -21,8 +21,8 @@ public interface IOrderExecutor
     /// <summary>잔고 조회 (USDT)</summary>
     Task<decimal> GetBalanceAsync();
 
-    /// <summary>Taker 수수료율 조회. 실거래: OKX API. 가상매매: 기본값 0.0005 반환.</summary>
-    Task<decimal> GetTakerFeeRateAsync(string symbol);
+    /// <summary>Taker/Maker 수수료율 조회. 실거래: OKX API. 가상매매: 기본값 반환.</summary>
+    Task<(decimal Taker, decimal Maker)> GetFeeRatesAsync(string symbol);
 
     /// <summary>
     /// 현재 포지션의 청산가 반환 (모의거래 전용 — 실거래는 null).

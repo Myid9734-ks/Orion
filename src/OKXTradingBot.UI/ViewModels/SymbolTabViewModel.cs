@@ -1027,10 +1027,11 @@ public class SymbolTabViewModel : ReactiveObject
         _core.OnTradeClosed     += HandleTradeClosed;
 
         // 수수료율 조회 (UI 예상수수료 표시 갱신)
-        _takerFeeRate = await executor.GetTakerFeeRateAsync(_symbol);
+        var (taker, maker) = await executor.GetFeeRatesAsync(_symbol);
+        _takerFeeRate = taker;
         this.RaisePropertyChanged(nameof(ExpectedFeeText));
         if (!global.IsBacktestMode)
-            AddLog($"[수수료] Taker {_takerFeeRate * 100:F4}%");
+            AddLog($"[수수료] Maker {maker * 100:F4}% / Taker {taker * 100:F4}%");
 
         _cts      = new CancellationTokenSource();
         IsRunning = true;

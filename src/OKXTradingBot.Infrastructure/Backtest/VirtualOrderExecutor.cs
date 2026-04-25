@@ -156,8 +156,8 @@ public class VirtualOrderExecutor : IOrderExecutor
     public Task<decimal> GetBalanceAsync()
         => Task.FromResult(_virtualBalance);
 
-    public Task<decimal> GetTakerFeeRateAsync(string symbol)
-        => Task.FromResult(0.0005m); // 가상매매 기본값
+    public Task<(decimal Taker, decimal Maker)> GetFeeRatesAsync(string symbol)
+        => Task.FromResult((0.0005m, 0.0002m)); // 가상매매 기본값
 
     // ── 서버 사이드 예약 주문 미지원 (모의거래는 캔들 폴링 방식 유지) ──
     public bool SupportsServerSidePreOrders => false;

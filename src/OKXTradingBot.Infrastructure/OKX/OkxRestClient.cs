@@ -97,25 +97,34 @@ public class OkxRestClient
         return 0m;
     }
 
-    /// <summary>Taker 수수료율 조회 (SWAP). 예: 0.0005 = 0.05%</summary>
-    public async Task<decimal> GetTakerFeeRateAsync(string instId)
+    /// <summary>
+    /// Taker/Maker 수수료율 조회 (SWAP).
+    /// 진입은 지정가(Maker) 시도 후 시장가(Taker) fallback이므로 둘 다 반환.
+    /// </summary>
+    public async Task<(decimal Taker, decimal Maker)> GetFeeRatesAsync(string instId)
     {
         try
         {
             var json = await GetPrivateAsync($"/api/v5/account/trade-fee?instType=SWAP&instId={instId}");
             var doc  = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("data", out var data) || data.GetArrayLength() == 0)
-                return 0.0005m;
+                return (0.0005m, 0.0002m);
 
-            var takerStr = data[0].TryGetProperty("taker", out var t) ? t.GetString() : "-0.0005";
-            if (decimal.TryParse(takerStr, out var rate))
-                return Math.Abs(rate); // OKX는 음수로 반환 (e.g. "-0.0005")
+            var item      = data[0];
+            var takerStr  = item.TryGetProperty("taker", out var t) ? t.GetString() : "-0.0005";
+            var makerStr  = item.TryGetProperty("maker", out var m) ? m.GetString() : "-0.0002";
 
-            return 0.0005m;
+            decimal.TryParse(takerStr, out var taker);
+            decimal.TryParse(makerStr, out var maker);
+
+            taker = taker != 0 ? Math.Abs(taker) : 0.0005m;
+            maker = maker != 0 ? Math.Abs(maker) : 0.0002m;
+
+            return (taker, maker);
         }
         catch
         {
-            return 0.0005m; // 조회 실패 시 기본값
+            return (0.0005m, 0.0002m);
         }
     }
 
