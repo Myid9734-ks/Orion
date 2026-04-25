@@ -25,7 +25,7 @@ public class TradingCore
     private readonly ILogger<TradingCore> _logger;
     private readonly Action<string>? _logFileSink; // 로그 파일 저장용 콜백
 
-    private const decimal TakerFeeRate = 0.0005m; // OKX VIP0 Taker 0.05%
+    private decimal _takerFeeRate = 0.0005m; // 시작 시 OKX API로 조회 후 갱신
 
     private Position _position = new();
     private bool     _running  = false;
@@ -124,6 +124,9 @@ public class TradingCore
         _cycleCount = 0;
         _sessionPnl = 0;
 
+        // 수수료율 조회
+        _takerFeeRate = await _executor.GetTakerFeeRateAsync(_config.Symbol);
+
         // 레버리지 설정
         var leverageOk = await _executor.SetLeverageAsync(
             _config.Symbol, _config.Leverage, _config.MarginModeStr);
@@ -175,7 +178,7 @@ public class TradingCore
 
         Log($"🚀 매매 시작 | {_config.Symbol} | 잔고: {balance:N2} USDT | 레버리지: {_config.Leverage}x | {_config.MarginModeStr} | 자동반복: {(_autoRepeat ? "ON" : "OFF")}");
         Log($"   예산: {_config.TotalBudget:F2} USDT | 마틴: {_config.MartinCount}단계 | 배분: {_config.AmountMode} [{amountStr}]");
-        Log($"   진입간격: {gapStr} | 익절: {tpStr} | 손절: {slStr}");
+        Log($"   진입간격: {gapStr} | 익절: {tpStr} | 손절: {slStr} | 수수료: {_takerFeeRate * 100:F4}% (Taker)");
         Log($"   GPT: {gptStr}");
 
         await NotifyAsync(
@@ -1127,7 +1130,7 @@ public class TradingCore
         var pnlAmt   = _position.TotalAmount * pricePct / 100; // 실제 손익금액 (명목×가격변화율)
 
         // 수수료: 선물 명목금액 기준 Taker 0.05% × 진입+청산
-        var fee      = _position.TotalAmount * TakerFeeRate * 2;
+        var fee      = _position.TotalAmount * _takerFeeRate * 2;
         var pnlNet   = pnlAmt - fee;
 
         _position.Status      = PositionStatus.Closed;
@@ -1337,7 +1340,7 @@ public class TradingCore
         var pnlAmt   = _position.TotalAmount * pricePct / 100; // 실제 손익금액 (명목×가격변화율, leverage 불필요)
 
         // 수수료: 선물 명목금액 기준 Taker 0.05% × 진입+청산
-        var fee      = _position.TotalAmount * TakerFeeRate * 2;
+        var fee      = _position.TotalAmount * _takerFeeRate * 2;
         var pnlNet   = pnlAmt - fee;
 
         _position.Status      = PositionStatus.Closed;

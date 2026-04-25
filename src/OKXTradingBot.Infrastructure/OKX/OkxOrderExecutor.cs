@@ -118,6 +118,9 @@ public class OkxOrderExecutor : IOrderExecutor
     public async Task<decimal> GetBalanceAsync()
         => await _rest.GetBalanceAsync();
 
+    public async Task<decimal> GetTakerFeeRateAsync(string symbol)
+        => await _rest.GetTakerFeeRateAsync(symbol);
+
     // 실거래는 OKX 서버가 청산 처리 — 시뮬레이션 불필요
     public decimal? GetLiquidationPrice() => null;
 

@@ -97,6 +97,28 @@ public class OkxRestClient
         return 0m;
     }
 
+    /// <summary>Taker 수수료율 조회 (SWAP). 예: 0.0005 = 0.05%</summary>
+    public async Task<decimal> GetTakerFeeRateAsync(string instId)
+    {
+        try
+        {
+            var json = await GetPrivateAsync($"/api/v5/account/trade-fee?instType=SWAP&instId={instId}");
+            var doc  = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.GetArrayLength() == 0)
+                return 0.0005m;
+
+            var takerStr = data[0].TryGetProperty("taker", out var t) ? t.GetString() : "-0.0005";
+            if (decimal.TryParse(takerStr, out var rate))
+                return Math.Abs(rate); // OKX는 음수로 반환 (e.g. "-0.0005")
+
+            return 0.0005m;
+        }
+        catch
+        {
+            return 0.0005m; // 조회 실패 시 기본값
+        }
+    }
+
     /// <summary>레버리지 및 마진 모드 설정 (mgnMode: "cross" | "isolated")</summary>
     public async Task<bool> SetLeverageAsync(string instId, int leverage, string mgnMode = "cross")
     {

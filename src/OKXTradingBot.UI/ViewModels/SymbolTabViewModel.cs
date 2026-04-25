@@ -114,6 +114,7 @@ public class SymbolTabViewModel : ReactiveObject
     private bool          _autoRepeat        = true;
     private decimal       _accountBalance    = 1000m;
     private decimal       _usdKrwRate        = 0m;    // 0 = 아직 미조회
+    private decimal       _takerFeeRate      = 0.0005m; // 봇 시작 시 API로 갱신
 
     // ── 차트 ──────────────────────────────────────────────────────────
     private string    _selectedBar       = "1D";
@@ -695,7 +696,7 @@ public class SymbolTabViewModel : ReactiveObject
 
     public string ExpectedFeeText =>
         TotalBudget > 0 && MartinCount > 0 && Leverage > 0
-            ? $"${TotalBudget * (Leverage ?? 1) * 0.0005m * 2:N2}" : "-"; // 진입+청산 Taker 0.05% × 레버리지
+            ? $"${TotalBudget * (Leverage ?? 1) * _takerFeeRate * 2:N2}" : "-"; // 진입+청산 Taker × 레버리지
 
     // ═══════════════════════════════════════════════════════════════════
     // 차트 설정
@@ -1024,6 +1025,12 @@ public class SymbolTabViewModel : ReactiveObject
         _core.OnPositionUpdated += HandlePositionUpdated;
         _core.OnLogMessage      += HandleLogMessage;
         _core.OnTradeClosed     += HandleTradeClosed;
+
+        // 수수료율 조회 (UI 예상수수료 표시 갱신)
+        _takerFeeRate = await executor.GetTakerFeeRateAsync(_symbol);
+        this.RaisePropertyChanged(nameof(ExpectedFeeText));
+        if (!global.IsBacktestMode)
+            AddLog($"[수수료] Taker {_takerFeeRate * 100:F4}%");
 
         _cts      = new CancellationTokenSource();
         IsRunning = true;
