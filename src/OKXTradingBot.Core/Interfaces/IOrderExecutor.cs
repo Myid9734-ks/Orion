@@ -57,6 +57,20 @@ public interface IOrderExecutor
     /// <summary>최근 발동/취소된 algo 주문 히스토리 (WS 누락 복구용). effective 상태만 반환.</summary>
     Task<List<AlgoOrderInfo>> GetAlgoOrderHistoryAsync(string symbol, int limit = 50);
 
+    // ── 지정가 watchdog 용 ─────────────────────────
+    /// <summary>심볼의 미체결 일반 주문 목록 (지정가/post_only 등). algo는 별도 endpoint.</summary>
+    Task<List<PendingOrderInfo>> GetPendingOrdersAsync(string symbol);
+
+    /// <summary>일반 지정가 주문 가격 정정.</summary>
+    Task<bool> AmendOrderAsync(string symbol, string orderId, decimal newPrice);
+
+    /// <summary>일반 주문 취소.</summary>
+    Task<bool> CancelOrderAsync(string symbol, string orderId);
+
+    /// <summary>지정가 청산 주문 (reduceOnly=true). USDT 금액 기준, 자동으로 계약수 환산.</summary>
+    Task<OrderResult> PlaceLimitReduceOrderAsync(
+        string symbol, TradeDirection direction, decimal usdtAmount, decimal price);
+
     /// <summary>algo 주문 체결/발동 이벤트 (Private WS).</summary>
     event EventHandler<AlgoOrderFillEvent>? OnAlgoOrderFilled;
 

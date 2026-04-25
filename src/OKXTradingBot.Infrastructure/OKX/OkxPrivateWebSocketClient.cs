@@ -273,43 +273,46 @@ public class OkxPrivateWebSocketClient : IAsyncDisposable
 
     private void HandleOrderUpdate(JsonElement item)
     {
-        var state    = item.TryGetProperty("state", out var s) ? s.GetString() : "";
-        var ordId    = item.TryGetProperty("ordId", out var o) ? o.GetString() : "";
-        var algoId   = item.TryGetProperty("algoId", out var a) ? a.GetString() : "";
-        var posSide  = item.TryGetProperty("posSide", out var ps) ? ps.GetString() : "";
-        var side     = item.TryGetProperty("side", out var sd) ? sd.GetString() : "";
-        var fillPx   = item.TryGetProperty("fillPx", out var fp) ? fp.GetString() : "";
-        var fillSz   = item.TryGetProperty("fillSz", out var fs) ? fs.GetString() : "";
-        var instId   = item.TryGetProperty("instId", out var ii) ? ii.GetString() : "";
-        var reduceOnly = item.TryGetProperty("reduceOnly", out var ro) && ro.GetString() == "true";
+        var state      = item.TryGetProperty("state",       out var s)  ? s.GetString()  : "";
+        var ordId      = item.TryGetProperty("ordId",       out var o)  ? o.GetString()  : "";
+        var algoId     = item.TryGetProperty("algoId",      out var a)  ? a.GetString()  : "";
+        var posSide    = item.TryGetProperty("posSide",     out var ps) ? ps.GetString() : "";
+        var side       = item.TryGetProperty("side",        out var sd) ? sd.GetString() : "";
+        var avgPx      = item.TryGetProperty("avgPx",       out var ap) ? ap.GetString() : "";   // 평균 체결가
+        var accFillSz  = item.TryGetProperty("accFillSz",   out var af) ? af.GetString() : "";   // 누적 체결 수량
+        var notionalUsd = item.TryGetProperty("notionalUsd", out var nu) ? nu.GetString() : "";  // 명목 USDT
+        var instId     = item.TryGetProperty("instId",      out var ii) ? ii.GetString() : "";
+        var reduceOnly = item.TryGetProperty("reduceOnly",  out var ro) && ro.GetString() == "true";
 
         _logger.LogInformation(
-            "[🔍TEST-3/4] orders: ordId={oid} algoId={aid} state={st} side={sd} posSide={ps} fillPx={fp} fillSz={fs} reduceOnly={ro}",
-            ordId, algoId, state, side, posSide, fillPx, fillSz, reduceOnly);
+            "[🔍TEST-3/4] orders: ordId={oid} algoId={aid} state={st} side={sd} posSide={ps} avgPx={ap} accFillSz={sz} reduceOnly={ro}",
+            ordId, algoId, state, side, posSide, avgPx, accFillSz, reduceOnly);
 
         if (state == "filled")
         {
             var label = reduceOnly ? "[🔍TEST-4] ✅ 익절 체결" : "[🔍TEST-3] ✅ 마틴 체결";
-            _logger.LogInformation("{label}: fillPx={px} fillSz={sz} algoId={aid}",
-                label, fillPx, fillSz, algoId);
+            _logger.LogInformation("{label}: avgPx={px} accFillSz={sz} algoId={aid}",
+                label, avgPx, accFillSz, algoId);
         }
 
         // filled 상태일 때만 이벤트 발사
         if (state != "filled" && state != "partially_filled") return;
 
-        if (!decimal.TryParse(fillPx, out var pxDec)) pxDec = 0;
-        if (!decimal.TryParse(fillSz, out var szDec)) szDec = 0;
+        if (!decimal.TryParse(avgPx,      out var pxDec))  pxDec  = 0;
+        if (!decimal.TryParse(accFillSz,  out var szDec))  szDec  = 0;
+        if (!decimal.TryParse(notionalUsd, out var notDec)) notDec = pxDec * szDec; // fallback
 
         var direction = posSide == "long" ? TradeDirection.Long : TradeDirection.Short;
 
         var evt = new AlgoOrderFillEvent
         {
-            AlgoId      = algoId ?? "",
-            OrderId     = ordId  ?? "",
-            Symbol      = instId ?? _instId,
+            AlgoId      = algoId  ?? "",
+            OrderId     = ordId   ?? "",
+            Symbol      = instId  ?? _instId,
             Direction   = direction,
             FilledPrice = pxDec,
             FilledSize  = szDec,
+            NotionalUsd = notDec,
             IsClose     = reduceOnly,
             Timestamp   = DateTime.UtcNow
         };

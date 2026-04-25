@@ -15,6 +15,12 @@ public class OkxOrderExecutor : IOrderExecutor
     private readonly OkxPrivateWebSocketClient    _privWs;
     private readonly ILogger<OkxOrderExecutor>    _logger;
     private string                                _marginMode = "cross";
+    private int                                   _leverage   = 1;
+
+    /// <summary>현재 설정된 레버리지 (지정가 변환용).</summary>
+    public int Leverage => _leverage;
+    /// <summary>REST 클라이언트 노출 (지정가 watchdog 등 추가 작업용).</summary>
+    public OkxRestClient Rest => _rest;
 
     public bool SupportsServerSidePreOrders => true;
 
@@ -46,7 +52,7 @@ public class OkxOrderExecutor : IOrderExecutor
         };
     }
 
-    // ── 시장가 즉시 진입 ──────────────────────────────
+    // ── 진입 (지정가 우선, 미체결 시 시장가 fallback) ──────
     public async Task<OrderResult> PlaceOrderAsync(OrderRequest request)
     {
         var (side, posSide) = request.Direction switch
@@ -55,6 +61,37 @@ public class OkxOrderExecutor : IOrderExecutor
             TradeDirection.Short => ("sell", "short"),
             _ => throw new ArgumentException("Invalid direction")
         };
+
+        // 지정가 시도 — Price 가 지정되어 있고 OrderType.Limit
+        if (request.Type == OrderType.Limit && request.Price.HasValue && request.Price.Value > 0)
+        {
+            var px = request.Price.Value;
+            _logger.LogInformation("[Executor] 지정가 진입 시도: {side} {posSide} {amt}USDT @ {px} [lev x{lev}]",
+                side, posSide, request.Amount, px, _leverage);
+
+            var limitRes = await _rest.PlaceLimitOrderUsdtAsync(
+                request.Symbol, side, posSide, request.Amount, px, _leverage, request.MarginMode);
+
+            if (limitRes.Success)
+            {
+                // 3초 대기 → 체결 확인. 미체결이면 1회 정정(현재가 추정 = 동일 px), 추가 3초, 최종 시장가 fallback
+                var fill = await _rest.WaitForFillAsync(request.Symbol, limitRes.OrderId, timeoutMs: 3000);
+                if (fill.Success && fill.FilledSize > 0)
+                {
+                    _logger.LogInformation("[Executor] 지정가 체결: ordId={oid} px={px} sz={sz}",
+                        limitRes.OrderId, fill.FilledPrice, fill.FilledSize);
+                    return fill;
+                }
+
+                // 미체결 → 취소 후 시장가 fallback
+                _logger.LogWarning("[Executor] 지정가 미체결 → 취소 + 시장가 fallback: ordId={oid}", limitRes.OrderId);
+                try { await _rest.CancelOrderAsync(request.Symbol, limitRes.OrderId); } catch { }
+            }
+            else
+            {
+                _logger.LogWarning("[Executor] 지정가 주문 실패 → 시장가 fallback: {err}", limitRes.ErrorMessage);
+            }
+        }
 
         _logger.LogInformation("[Executor] 시장가 주문: {side} {posSide} {sz}USDT @ {symbol} [{mgnMode}]",
             side, posSide, request.Amount, request.Symbol, request.MarginMode);
@@ -72,6 +109,7 @@ public class OkxOrderExecutor : IOrderExecutor
     public async Task<bool> SetLeverageAsync(string symbol, int leverage, string marginMode)
     {
         _marginMode = marginMode;
+        _leverage   = leverage > 0 ? leverage : 1;
         _logger.LogInformation("[Executor] 레버리지 설정: {symbol} x{lev} [{mode}]",
             symbol, leverage, marginMode);
         return await _rest.SetLeverageAsync(symbol, leverage, marginMode);
@@ -151,6 +189,32 @@ public class OkxOrderExecutor : IOrderExecutor
     {
         _logger.LogInformation("[Executor] algo 히스토리 조회: {symbol} limit={n}", symbol, limit);
         return await _rest.GetAlgoOrderHistoryAsync(symbol, limit);
+    }
+
+    // ── 지정가 watchdog 용 ─────────────────────────
+    public Task<List<PendingOrderInfo>> GetPendingOrdersAsync(string symbol)
+        => _rest.GetPendingOrdersAsync(symbol);
+
+    public Task<bool> AmendOrderAsync(string symbol, string orderId, decimal newPrice)
+        => _rest.AmendOrderAsync(symbol, orderId, newPrice);
+
+    public Task<bool> CancelOrderAsync(string symbol, string orderId)
+        => _rest.CancelOrderAsync(symbol, orderId);
+
+    public async Task<OrderResult> PlaceLimitReduceOrderAsync(
+        string symbol, TradeDirection direction, decimal usdtAmount, decimal price)
+    {
+        // reduceOnly 청산: 보유 방향의 반대 side, posSide 유지
+        var (side, posSide) = direction switch
+        {
+            TradeDirection.Long  => ("sell", "long"),
+            TradeDirection.Short => ("buy",  "short"),
+            _ => throw new ArgumentException("Invalid direction")
+        };
+        _logger.LogInformation("[Executor] 지정가 청산 요청: {symbol} {dir} {amt}USDT @ {px}",
+            symbol, direction, usdtAmount, price);
+        return await _rest.PlaceLimitOrderUsdtAsync(
+            symbol, side, posSide, usdtAmount, price, _leverage, _marginMode, reduceOnly: true);
     }
 
     public async Task StartPrivateStreamAsync(CancellationToken ct)

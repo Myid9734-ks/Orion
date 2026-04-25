@@ -56,7 +56,7 @@ public class Position
     public void UpdateUnrealizedPnl(decimal currentPrice, int leverage)
     {
         var pricePct      = GetUnrealizedPnlPercent(currentPrice);
-        CurrentPnlPercent = pricePct * leverage;                       // 레버리지 포함 수익률
-        CurrentPnlAmount  = TotalAmount * pricePct / 100 * leverage;   // 실현 손익금액
+        CurrentPnlPercent = pricePct * leverage;          // 레버리지 포함 수익률 % (표시용)
+        CurrentPnlAmount  = TotalAmount * pricePct / 100; // 실제 손익금액 (명목×가격변화율)
     }
 }

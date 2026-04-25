@@ -163,6 +163,204 @@ public class OkxRestClient
         };
     }
 
+    // 인스트루먼트 메타 캐시 (ctVal, lotSz, minSz)
+    private readonly Dictionary<string, (decimal CtVal, decimal LotSz, decimal MinSz)> _instSpecCache = new();
+    private readonly SemaphoreSlim _instSpecLock = new(1, 1);
+
+    /// <summary>인스트루먼트 메타 조회 (ctVal: 1계약당 기초자산 수량). 30분 캐시.</summary>
+    public async Task<(decimal CtVal, decimal LotSz, decimal MinSz)> GetInstrumentSpecAsync(string instId)
+    {
+        await _instSpecLock.WaitAsync();
+        try
+        {
+            if (_instSpecCache.TryGetValue(instId, out var cached) && cached.CtVal > 0)
+                return cached;
+
+            var url  = $"/api/v5/public/instruments?instType=SWAP&instId={instId}";
+            var json = await GetPublicAsync(url);
+            var doc  = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.GetArrayLength() == 0)
+                return (0, 0, 0);
+
+            var item = data[0];
+            decimal.TryParse(item.TryGetProperty("ctVal", out var cv) ? cv.GetString() : "0", out var ctVal);
+            decimal.TryParse(item.TryGetProperty("lotSz", out var lz) ? lz.GetString() : "1", out var lotSz);
+            decimal.TryParse(item.TryGetProperty("minSz", out var ms) ? ms.GetString() : "1", out var minSz);
+
+            var spec = (ctVal, lotSz, minSz);
+            _instSpecCache[instId] = spec;
+            return spec;
+        }
+        finally { _instSpecLock.Release(); }
+    }
+
+    /// <summary>USDT 명목금액을 계약 수로 변환. contracts = usdtAmount / (price * ctVal), lotSz 정렬.</summary>
+    public async Task<decimal> ConvertUsdtToContractsAsync(string instId, decimal usdtAmount, decimal price, int leverage)
+    {
+        var (ctVal, lotSz, minSz) = await GetInstrumentSpecAsync(instId);
+        if (ctVal <= 0 || price <= 0) return 0m;
+
+        var raw = usdtAmount / (price * ctVal); // usdtAmount는 명목금액(notional), 레버리지 곱셈 불필요
+        if (lotSz <= 0) lotSz = 1m;
+
+        // lotSz 단위로 내림 정렬
+        var contracts = Math.Floor(raw / lotSz) * lotSz;
+        if (contracts < minSz) contracts = minSz;
+        return contracts;
+    }
+
+    /// <summary>지정가 주문 (무기한 선물). sz는 계약 수.</summary>
+    public async Task<OrderResult> PlaceLimitOrderAsync(
+        string instId, string side, string posSide, decimal contractSz, decimal px,
+        string mgnMode = "cross", bool reduceOnly = false)
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            instId,
+            tdMode  = mgnMode,
+            side,
+            posSide,
+            ordType = "limit",
+            sz      = contractSz.ToString("0.########"),
+            px      = px.ToString("0.########"),
+            reduceOnly = reduceOnly ? "true" : "false"
+        });
+
+        _logger.LogInformation("[Limit] 지정가 주문 요청: {body}", body);
+        var json   = await PostPrivateAsync("/api/v5/trade/order", body);
+        _logger.LogInformation("[Limit] 지정가 주문 응답: {json}", json);
+
+        var doc    = JsonDocument.Parse(json);
+        var result = doc.RootElement.GetProperty("data")[0];
+        var code   = doc.RootElement.GetProperty("code").GetString();
+
+        if (code != "0")
+        {
+            var sCode = result.TryGetProperty("sCode", out var sc) ? sc.GetString() : code;
+            var sMsg  = result.TryGetProperty("sMsg",  out var sm) ? sm.GetString() : "unknown";
+            _logger.LogError("[Limit] 주문 실패: [{sCode}] {sMsg}", sCode, sMsg);
+            return new OrderResult { Success = false, ErrorMessage = $"[{sCode}] {sMsg}" };
+        }
+
+        var ordId = result.GetProperty("ordId").GetString()!;
+        return new OrderResult { Success = true, OrderId = ordId };
+    }
+
+    /// <summary>USDT 금액 + 가격으로 지정가 주문 (계약수 자동 환산).</summary>
+    public async Task<OrderResult> PlaceLimitOrderUsdtAsync(
+        string instId, string side, string posSide,
+        decimal usdtAmount, decimal px, int leverage,
+        string mgnMode = "cross", bool reduceOnly = false)
+    {
+        var contracts = await ConvertUsdtToContractsAsync(instId, usdtAmount, px, leverage);
+        if (contracts <= 0)
+        {
+            _logger.LogError("[Limit] 계약수 환산 실패: usdt={u} px={p} lev={l}", usdtAmount, px, leverage);
+            return new OrderResult { Success = false, ErrorMessage = "계약수 환산 실패" };
+        }
+        _logger.LogInformation("[Limit] {usdt} USDT ÷ ({px} × ctVal) = {ct} 계약",
+            usdtAmount, px, contracts);
+        return await PlaceLimitOrderAsync(instId, side, posSide, contracts, px, mgnMode, reduceOnly);
+    }
+
+    /// <summary>지정가 주문 가격 정정 (newPx).</summary>
+    public async Task<bool> AmendOrderAsync(string instId, string ordId, decimal newPx)
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            instId,
+            ordId,
+            newPx = newPx.ToString("F8")
+        });
+
+        _logger.LogInformation("[Amend] 정정 요청: ordId={oid} newPx={px}", ordId, newPx);
+        var json = await PostPrivateAsync("/api/v5/trade/amend-order", body);
+        var doc  = JsonDocument.Parse(json);
+        var code = doc.RootElement.GetProperty("code").GetString();
+        return code == "0";
+    }
+
+    /// <summary>일반 주문 취소 (algo 아님).</summary>
+    public async Task<bool> CancelOrderAsync(string instId, string ordId)
+    {
+        var body = JsonSerializer.Serialize(new { instId, ordId });
+        var json = await PostPrivateAsync("/api/v5/trade/cancel-order", body);
+        var doc  = JsonDocument.Parse(json);
+        var code = doc.RootElement.GetProperty("code").GetString();
+        return code == "0";
+    }
+
+    /// <summary>심볼의 미체결 일반 주문 목록 (reduceOnly 포함). algo는 별도 endpoint.</summary>
+    public async Task<List<PendingOrderInfo>> GetPendingOrdersAsync(string instId)
+    {
+        var json = await GetPrivateAsync($"/api/v5/trade/orders-pending?instType=SWAP&instId={instId}");
+        var doc  = JsonDocument.Parse(json);
+        var list = new List<PendingOrderInfo>();
+        if (!doc.RootElement.TryGetProperty("data", out var data)) return list;
+        foreach (var item in data.EnumerateArray())
+        {
+            decimal.TryParse(item.TryGetProperty("px",        out var px) ? px.GetString() : "0", out var pxV);
+            decimal.TryParse(item.TryGetProperty("sz",        out var sz) ? sz.GetString() : "0", out var szV);
+            decimal.TryParse(item.TryGetProperty("accFillSz", out var af) ? af.GetString() : "0", out var afV);
+            long.TryParse   (item.TryGetProperty("cTime",     out var ct) ? ct.GetString() : "0", out var ctMs);
+            list.Add(new PendingOrderInfo
+            {
+                OrderId    = item.TryGetProperty("ordId",   out var oi) ? oi.GetString() ?? "" : "",
+                Side       = item.TryGetProperty("side",    out var sd) ? sd.GetString() ?? "" : "",
+                PosSide    = item.TryGetProperty("posSide", out var ps) ? ps.GetString() ?? "" : "",
+                OrdType    = item.TryGetProperty("ordType", out var ot) ? ot.GetString() ?? "" : "",
+                Price      = pxV,
+                Size       = szV,
+                FilledSize = afV,
+                ReduceOnly = (item.TryGetProperty("reduceOnly", out var ro) ? ro.GetString() : "false") == "true",
+                CreatedAt  = ctMs > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(ctMs).UtcDateTime : DateTime.UtcNow
+            });
+        }
+        return list;
+    }
+
+    /// <summary>지정가 주문 체결 폴링 (timeoutMs 안에 filled 되면 fillPx 반환).</summary>
+    public async Task<OrderResult> WaitForFillAsync(string instId, string ordId, int timeoutMs = 3000, int pollMs = 250)
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+        while (DateTime.UtcNow < deadline)
+        {
+            var json = await GetPrivateAsync($"/api/v5/trade/order?instId={instId}&ordId={ordId}");
+            var doc  = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("data", out var data) && data.GetArrayLength() > 0)
+            {
+                var item   = data[0];
+                var state  = item.TryGetProperty("state",     out var st) ? st.GetString() : "";
+                var fillPx = item.TryGetProperty("avgPx",     out var fp) ? fp.GetString() : "0";
+                var accSz  = item.TryGetProperty("accFillSz", out var af) ? af.GetString() : "0";
+
+                if (state == "filled" || state == "partially_filled")
+                {
+                    decimal.TryParse(fillPx, out var px);
+                    decimal.TryParse(accSz,  out var sz);
+                    return new OrderResult { Success = true, OrderId = ordId, FilledPrice = px, FilledSize = sz, State = state };
+                }
+            }
+            await Task.Delay(pollMs);
+        }
+        return new OrderResult { Success = false, OrderId = ordId, State = "timeout" };
+    }
+
+    /// <summary>주문 상태 + 미체결 잔량 조회 (state, fillSz, sz, px).</summary>
+    public async Task<(string State, decimal FilledSize, decimal TotalSize, decimal Price)> GetOrderStateAsync(string instId, string ordId)
+    {
+        var json = await GetPrivateAsync($"/api/v5/trade/order?instId={instId}&ordId={ordId}");
+        var doc  = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("data", out var data) || data.GetArrayLength() == 0)
+            return ("unknown", 0, 0, 0);
+        var item = data[0];
+        var state = item.TryGetProperty("state", out var st) ? st.GetString() ?? "" : "";
+        decimal.TryParse(item.TryGetProperty("accFillSz", out var af) ? af.GetString() : "0", out var filled);
+        decimal.TryParse(item.TryGetProperty("sz",        out var sz) ? sz.GetString() : "0", out var total);
+        decimal.TryParse(item.TryGetProperty("px",        out var px) ? px.GetString() : "0", out var price);
+        return (state, filled, total, price);
+    }
+
     /// <summary>주문 체결 상세 조회 — PlaceMarketOrderAsync 직후 fillPx 확인용</summary>
     private async Task<OrderResult> QueryOrderFillAsync(string instId, string ordId)
     {
@@ -240,8 +438,8 @@ public class OkxRestClient
             ordType       = "trigger",
             sz            = sz.ToString("F4"),
             tgtCcy        = "quote_ccy",
-            triggerPx     = triggerPx.ToString("F4"),
-            orderPx       = "-1",      // -1 = market on trigger
+            triggerPx     = triggerPx.ToString("0.########"),
+            orderPx       = "-1",  // -1 = 트리거 발동 시 시장가로 즉시 체결 (미체결 방지)
             triggerPxType = "last",
             reduceOnly    = reduceOnly ? "true" : "false"
         });
@@ -269,8 +467,8 @@ public class OkxRestClient
             posSide,
             ordType       = "conditional",
             closeFraction = "1",     // 100% 포지션 청산
-            tpTriggerPx   = tpTriggerPx.ToString("F4"),
-            tpOrdPx       = "-1",    // 시장가
+            tpTriggerPx   = tpTriggerPx.ToString("0.########"),
+            tpOrdPx       = "-1",    // -1 = 트리거 도달 시 시장가 체결 (미체결 방지)
             tpTriggerPxType = "last",
             reduceOnly    = "true"
         });

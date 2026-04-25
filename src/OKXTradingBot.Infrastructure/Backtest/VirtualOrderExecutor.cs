@@ -79,6 +79,7 @@ public class VirtualOrderExecutor : IOrderExecutor
             OrderId      = $"VIRTUAL-{Guid.NewGuid():N}",
             FilledPrice  = filledPrice,
             FilledAmount = request.Amount,
+            FilledSize   = filledPrice > 0 ? Math.Round(request.Amount / filledPrice, 8) : 0,
             Timestamp    = DateTime.UtcNow
         };
     }
@@ -191,4 +192,18 @@ public class VirtualOrderExecutor : IOrderExecutor
 
     public Task<List<AlgoOrderInfo>> GetAlgoOrderHistoryAsync(string symbol, int limit = 50)
         => Task.FromResult(new List<AlgoOrderInfo>());
+
+    // ── 지정가 watchdog (가상매매에서는 미사용) ───────
+    public Task<List<PendingOrderInfo>> GetPendingOrdersAsync(string symbol)
+        => Task.FromResult(new List<PendingOrderInfo>());
+
+    public Task<bool> AmendOrderAsync(string symbol, string orderId, decimal newPrice)
+        => Task.FromResult(true);
+
+    public Task<bool> CancelOrderAsync(string symbol, string orderId)
+        => Task.FromResult(true);
+
+    public Task<OrderResult> PlaceLimitReduceOrderAsync(
+        string symbol, TradeDirection direction, decimal usdtAmount, decimal price)
+        => Task.FromResult(new OrderResult { Success = false, ErrorMessage = "Virtual: 미지원" });
 }

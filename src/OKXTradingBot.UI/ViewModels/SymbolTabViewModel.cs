@@ -773,7 +773,7 @@ public class SymbolTabViewModel : ReactiveObject
         }
     }
 
-    public string CurrentPriceText => CurrentPrice > 0 ? $"${CurrentPrice:N2}" : "--";
+    public string CurrentPriceText => CurrentPrice > 0 ? $"${Px(CurrentPrice)}" : "--";
 
     public string PositionStatusText
     {
@@ -827,7 +827,7 @@ public class SymbolTabViewModel : ReactiveObject
         }
     }
 
-    public string AvgEntryPriceText => AvgEntryPrice > 0 ? $"{AvgEntryPrice:N2}" : "-";
+    public string AvgEntryPriceText => AvgEntryPrice > 0 ? Px(AvgEntryPrice) : "-";
 
     public decimal NextMartinPrice
     {
@@ -839,7 +839,7 @@ public class SymbolTabViewModel : ReactiveObject
         }
     }
 
-    public string NextMartinPriceText => NextMartinPrice > 0 ? $"{NextMartinPrice:N2}" : "-";
+    public string NextMartinPriceText => NextMartinPrice > 0 ? Px(NextMartinPrice) : "-";
 
     public decimal UnrealizedPnlPct
     {
@@ -1327,6 +1327,13 @@ public class SymbolTabViewModel : ReactiveObject
     {
         Logs.Insert(0, message);
         while (Logs.Count > 500) Logs.RemoveAt(Logs.Count - 1);
+    }
+
+    private static string Px(decimal price)
+    {
+        if (price <= 0) return "0";
+        var digits = Math.Max(2, (int)Math.Ceiling(-Math.Log10((double)price)) + 3);
+        return price.ToString($"N{Math.Min(digits, 8)}");
     }
 
     /// <summary>UI 거래 기록 및 통계 초기화 (DB 삭제는 호출자가 처리)</summary>

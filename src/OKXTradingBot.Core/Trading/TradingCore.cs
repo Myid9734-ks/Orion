@@ -40,6 +40,11 @@ public class TradingCore
     private string?  _activeTpAlgoId;                     // 익절 conditional algoId
     private bool     _preOrderMode;                       // _executor.SupportsServerSidePreOrders 캐시
 
+    // ── 지정가 청산 watchdog (5초×2회 정정 → 시장가 fallback) ──
+    private CancellationTokenSource? _watchdogCts;
+    private Task?                    _watchdogTask;
+    private readonly Dictionary<string, (DateTime FirstSeen, int AmendCount)> _exitOrderTracker = new();
+
     // 가격 방향 감지 모드 (GPT 미사용 시)
     private decimal  _priceAnchor = 0;       // 기준가 (봇 시작 시 또는 청산 후 재진입 대기 시점 가격)
 
@@ -154,7 +159,7 @@ public class TradingCore
 
         // ── 단계별 금액 / 간격 / 익절 요약 ──
         var amounts     = _config.GetAllStepAmounts();
-        var amountStr   = string.Join(", ", amounts.Select((a, i) => $"{i + 1}:{a:F0}"));
+        var amountStr   = string.Join(", ", amounts.Select((a, i) => $"{i + 1}:{a:F2}"));
         var gapStr      = _config.MartinGapSteps.Count > 0
             ? string.Join(", ", _config.MartinGapSteps.Select((g, i) => $"{i + 1}:{g}%"))
             : $"{_config.MartinGap}% (균등)";
@@ -193,24 +198,143 @@ public class TradingCore
             try
             {
                 _priceAnchor = await _data.GetCurrentPriceAsync();
-                Log($"[가격 방향 감지] 기준가 설정: {_priceAnchor:N2} — 다음 캔들 방향으로 진입");
+                Log($"[가격 방향 감지] 기준가 설정: {Px(_priceAnchor)} — 다음 캔들 방향으로 진입");
             }
             catch { _priceAnchor = 0; }
         }
 
         await _data.StartAsync(ct);
         Log("첫 캔들 완성 대기 중...");
+
+        // 지정가 청산 watchdog 시작 (실거래 모드만)
+        if (_preOrderMode) StartExitWatchdog(ct);
     }
 
     public async Task StopAsync()
     {
         _running = false;
+        await StopExitWatchdog();
         await _data.StopAsync();
 
         // 예비주문/익절주문은 취소하지 않음 — OKX 서버에서 사이클 유지
         var msg = $"⏹ 봇 중지 | 완료 사이클: {_cycleCount}회 | 세션 손익: {_sessionPnl:+0.00;-0.00;0.00} USDT";
         Log(msg);
         await NotifyAsync(msg, NotificationType.BotStartStop);
+    }
+
+    // ═════════════════════════════════════════════
+    // 지정가 청산 watchdog
+    //   - reduceOnly limit 미체결 5초마다 현재가로 정정
+    //   - 2회 정정해도 미체결이면 취소 후 시장가 청산 (총 ~15초)
+    //   - 대상: TP가 trigger 후 spawn한 limit, SL로 직접 건 limit
+    // ═════════════════════════════════════════════
+    private void StartExitWatchdog(CancellationToken parent)
+    {
+        if (_watchdogTask != null && !_watchdogTask.IsCompleted) return;
+        _watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(parent);
+        _exitOrderTracker.Clear();
+        _watchdogTask = Task.Run(() => ExitWatchdogLoopAsync(_watchdogCts.Token));
+        Log("👁 지정가 청산 watchdog 시작 (5초×2 정정 → 시장가 fallback)");
+    }
+
+    private async Task StopExitWatchdog()
+    {
+        try { _watchdogCts?.Cancel(); } catch { }
+        if (_watchdogTask != null)
+        {
+            try { await _watchdogTask; } catch { }
+        }
+        _watchdogTask = null;
+        _watchdogCts  = null;
+        _exitOrderTracker.Clear();
+    }
+
+    private async Task ExitWatchdogLoopAsync(CancellationToken ct)
+    {
+        const int   PollMs        = 1000;
+        const double AmendAfterSec = 5.0;
+        const int   MaxAmends     = 2;
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(PollMs, ct);
+                if (_position == null || _position.Status != PositionStatus.Open)
+                {
+                    if (_exitOrderTracker.Count > 0) _exitOrderTracker.Clear();
+                    continue;
+                }
+
+                List<PendingOrderInfo> pendings;
+                try { pendings = await _executor.GetPendingOrdersAsync(_config.Symbol); }
+                catch (Exception ex) { Log($"⚠️ watchdog 조회 실패: {ex.Message}"); continue; }
+
+                var exits = pendings.Where(p => p.ReduceOnly && p.OrdType == "limit").ToList();
+                if (exits.Count == 0)
+                {
+                    if (_exitOrderTracker.Count > 0) _exitOrderTracker.Clear();
+                    continue;
+                }
+
+                var now     = DateTime.UtcNow;
+                var seenIds = new HashSet<string>();
+
+                foreach (var ord in exits)
+                {
+                    seenIds.Add(ord.OrderId);
+                    if (!_exitOrderTracker.TryGetValue(ord.OrderId, out var info))
+                    {
+                        info = (now, 0);
+                        _exitOrderTracker[ord.OrderId] = info;
+                        Log($"👁 청산 limit 추적 시작: ordId={ord.OrderId} px={ord.Price}");
+                        continue;
+                    }
+
+                    var elapsed = (now - info.FirstSeen).TotalSeconds;
+                    if (elapsed < AmendAfterSec) continue;
+
+                    if (info.AmendCount < MaxAmends)
+                    {
+                        // 현재가로 정정
+                        decimal currentPx;
+                        try { currentPx = await _data.GetCurrentPriceAsync(); }
+                        catch { continue; }
+                        if (currentPx <= 0) continue;
+
+                        try
+                        {
+                            var ok = await _executor.AmendOrderAsync(_config.Symbol, ord.OrderId, currentPx);
+                            if (ok)
+                            {
+                                Log($"⏰ 청산 limit 미체결 {elapsed:F0}s → 정정 #{info.AmendCount + 1}: {ord.Price} → {currentPx:N6}");
+                                _exitOrderTracker[ord.OrderId] = (now, info.AmendCount + 1);
+                            }
+                            else
+                            {
+                                Log($"⚠️ 정정 실패 (응답 not ok): ordId={ord.OrderId} — 다음 tick에 재시도");
+                            }
+                        }
+                        catch (Exception ex) { Log($"⚠️ 정정 예외: {ex.Message}"); }
+                    }
+                    else
+                    {
+                        // 시장가 fallback
+                        Log($"⏰ 청산 limit {info.AmendCount}회 정정 후도 미체결 ({elapsed:F0}s) → 취소 후 시장가 청산: ordId={ord.OrderId}");
+                        try { await _executor.CancelOrderAsync(_config.Symbol, ord.OrderId); } catch (Exception ex) { Log($"⚠️ limit 취소 실패: {ex.Message}"); }
+                        try { await _executor.ClosePositionAsync(_config.Symbol, _position.Direction); }
+                        catch (Exception ex) { Log($"❌ 시장가 청산 예외: {ex.Message}"); }
+                        _exitOrderTracker.Remove(ord.OrderId);
+                    }
+                }
+
+                // 사라진 ord 정리 (체결/취소됨)
+                var stale = _exitOrderTracker.Keys.Where(k => !seenIds.Contains(k)).ToList();
+                foreach (var k in stale) _exitOrderTracker.Remove(k);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex) { Log($"⚠️ watchdog 루프 예외: {ex.Message}"); }
+        }
     }
 
     /// <summary>예비주문/익절주문 취소 후 봇 중지 — 포지션은 유지 (매매감지 X)</summary>
@@ -414,23 +538,24 @@ public class TradingCore
         if (_priceAnchor <= 0)
         {
             _priceAnchor = currentPrice;
-            Log($"[가격 방향 감지] 기준가 갱신: {_priceAnchor:N2} — 다음 캔들 대기");
+            Log($"[가격 방향 감지] 기준가 갱신: {Px(_priceAnchor)} — 다음 캔들 대기");
             return (TradeDirection)(-1); // 대기 신호
         }
 
         var diff    = currentPrice - _priceAnchor;
-        var diffPct = Math.Abs(diff) / _priceAnchor * 100;
+        var diffPct = diff / _priceAnchor * 100; // 부호 유지 (양수=상승, 음수=하락)
+        var absPct  = Math.Abs(diffPct);
 
         // 최소 변동폭 0.01% 미만이면 무시 (노이즈 방지)
-        if (diffPct < 0.01m)
+        if (absPct < 0.01m)
         {
-            Log($"[가격 방향 감지] 변동 미미 ({diffPct:F4}%) — 대기");
+            Log($"[가격 방향 감지] 변동 미미 ({diffPct:+0.0000;-0.0000}%) — 대기");
             return (TradeDirection)(-1);
         }
 
         var dir = diff > 0 ? TradeDirection.Long : TradeDirection.Short;
-        Log($"[가격 방향 감지] 기준가: {_priceAnchor:N2} → 현재가: {currentPrice:N2} " +
-            $"({(diff > 0 ? "+" : "")}{diffPct:F3}%) → {dir} 진입");
+        Log($"[가격 방향 감지] 기준가: {Px(_priceAnchor)} → 현재가: {Px(currentPrice)} " +
+            $"({diffPct:+0.000;-0.000}%) → {dir} 진입");
 
         // 진입 후 기준가 초기화 (다음 사이클을 위해 청산 후 재설정)
         _priceAnchor = 0;
@@ -456,7 +581,7 @@ public class TradingCore
         if (triggered)
         {
             Log($"🔁 마틴 {_position.MartinStep + 1}단계 트리거 | " +
-                $"현재가: {currentPrice:N2} | 트리거: {triggerPrice:N2} | 간격: {gap}%");
+                $"현재가: {Px(currentPrice)} | 트리거: {Px(triggerPrice)} | 간격: {gap}%");
             await EnterAsync(_position.Direction, currentPrice, isFirstEntry: false);
         }
     }
@@ -478,7 +603,7 @@ public class TradingCore
             if (liquidated)
             {
                 var modeLabel = _config.MarginModeStr == "cross" ? "교차" : "격리";
-                Log($"💥 강제청산 ({modeLabel} 마진) | 현재가: {currentPrice:N2} | 청산가: {liqPrice.Value:N2}");
+                Log($"💥 강제청산 ({modeLabel} 마진) | 현재가: {Px(currentPrice)} | 청산가: {Px(liqPrice.Value)}");
                 await ClosePositionAsync(currentPrice, isStopLoss: false, isForceClose: true);
                 return;
             }
@@ -575,7 +700,22 @@ public class TradingCore
             return;
         }
 
-        // 4) 시장가 청산
+        // 4) 지정가 청산 (현재가) — 미체결 시 watchdog 이 5초×2 정정 후 시장가 fallback
+        try
+        {
+            var limitRes = await _executor.PlaceLimitReduceOrderAsync(
+                _config.Symbol, _position.Direction, _position.TotalAmount, currentPrice);
+            if (limitRes.Success)
+            {
+                Log($"🛑 손절 지정가 청산 등록: ordId={limitRes.OrderId} @ {currentPrice:N6} — watchdog 감시 시작");
+                return; // watchdog 가 fill / amend / fallback 처리
+            }
+            Log($"⚠️ 손절 지정가 등록 실패 → 시장가 fallback: {limitRes.ErrorMessage}");
+        }
+        catch (Exception ex)
+        {
+            Log($"⚠️ 손절 지정가 예외 → 시장가 fallback: {ex.Message}");
+        }
         await ClosePositionAsync(currentPrice, isStopLoss: true);
     }
 
@@ -841,7 +981,8 @@ public class TradingCore
                 {
                     Log($"ℹ️ WS 끊김 구간에 마틴 {_position.MartinStep}→{newStep.Value}단계 체결 감지 — 포지션 갱신");
                     _position.MartinStep     = newStep.Value;
-                    _position.TotalAmount    = pos.NotionalUsd / _config.Leverage;
+                    _position.TotalAmount    = pos.NotionalUsd;
+                    _position.TotalQuantity  = pos.AvgEntryPrice > 0 ? pos.NotionalUsd / pos.AvgEntryPrice : 0;
                     _position.AvgEntryPrice  = pos.AvgEntryPrice;
                     _position.LastEntryPrice = pos.AvgEntryPrice;
 
@@ -926,15 +1067,16 @@ public class TradingCore
         }
         Log($"[🔍TEST-3] 마틴 체결 처리 시작: algoId={e.AlgoId} fillPx={e.FilledPrice:N4} fillSz={e.FilledSize} notional={e.NotionalUsd:F2}USDT");
 
-        // 체결가 기반 평균가 재계산
-        // 명목 USDT 금액 추정: FilledSize × FilledPrice (계약수 기반이면 정확하지 않을 수 있음 → 보수적 처리)
+        // 체결가 기반 평균가 재계산 (계약수 기반 가중평균)
         var notional = e.NotionalUsd > 0 ? e.NotionalUsd : (e.FilledSize * e.FilledPrice);
+        var qty      = e.FilledPrice > 0 ? notional / e.FilledPrice : 0;
 
-        var prevTotal = _position.TotalAmount;
         _position.MartinStep++;
         _position.TotalAmount   += notional;
-        _position.AvgEntryPrice  = (prevTotal * _position.AvgEntryPrice + notional * e.FilledPrice)
-                                   / _position.TotalAmount;
+        _position.TotalQuantity += qty;
+        _position.AvgEntryPrice  = _position.TotalQuantity > 0
+            ? _position.TotalAmount / _position.TotalQuantity
+            : e.FilledPrice;
         _position.LastEntryPrice = e.FilledPrice;
 
         // algoId 추적 정리
@@ -981,11 +1123,10 @@ public class TradingCore
     private async Task FinalizeClosedFromServerAsync(decimal exitPrice, bool isStopLoss)
     {
         var pricePct = _position.GetUnrealizedPnlPercent(exitPrice);
-        var pnlPct   = pricePct * _config.Leverage;                      // 레버리지 포함 수익률 (로그·이벤트용)
-        var pnlAmt   = _position.TotalAmount * pricePct / 100 * _config.Leverage;
+        var pnlPct   = pricePct * _config.Leverage;          // 레버리지 포함 수익률 % (표시용)
+        var pnlAmt   = _position.TotalAmount * pricePct / 100; // 실제 손익금액 (명목×가격변화율)
 
-        // 수수료 차감: 진입(들) + 청산 각 Taker 0.05% (명목금액 기준)
-        // 수수료: 선물은 명목가(투자금) 기준 — 레버리지는 이미 pnlAmt 계산에서 반영됨
+        // 수수료: 선물 명목금액 기준 Taker 0.05% × 진입+청산
         var fee      = _position.TotalAmount * TakerFeeRate * 2;
         var pnlNet   = pnlAmt - fee;
 
@@ -1015,19 +1156,19 @@ public class TradingCore
 
         var emoji     = isStopLoss ? "🛑" : "✅";
         var typeLabel = isStopLoss ? "손절" : "익절";
-        Log($"{emoji} [pre-orders] {typeLabel} 청산 완료 | {pnlPct:+0.00;-0.00}% ({pnlAmt:+0.00;-0.00} USDT) | 수수료: -{fee:F2} USDT | 순손익: {pnlNet:+0.00;-0.00} USDT | " +
-            $"마틴 {_position.MartinStep}/{_config.MartinCount} | 사이클 #{_cycleCount} | 세션: {_sessionPnl:+0.00;-0.00}");
+        Log($"{emoji} [pre-orders] {typeLabel} 청산 완료 | {pnlPct:+0.00;-0.00}% ({pnlAmt:+0.0000;-0.0000} USDT) | 수수료: -{fee:F4} USDT | 순손익: {pnlNet:+0.0000;-0.0000} USDT | " +
+            $"마틴 {_position.MartinStep}/{_config.MartinCount} | 사이클 #{_cycleCount} | 세션: {_sessionPnl:+0.0000;-0.0000}");
 
         await NotifyAsync(
             $"{emoji} <b>{typeLabel} 청산 (서버)</b>\n" +
             $"심볼: {_config.Symbol}\n" +
             $"수익률: {pnlPct:+0.00;-0.00}%\n" +
-            $"손익: {pnlAmt:+0.00;-0.00} USDT\n" +
-            $"수수료: -{fee:F2} USDT\n" +
-            $"순손익: {pnlNet:+0.00;-0.00} USDT\n" +
+            $"손익: {pnlAmt:+0.0000;-0.0000} USDT\n" +
+            $"수수료: -{fee:F4} USDT\n" +
+            $"순손익: {pnlNet:+0.0000;-0.0000} USDT\n" +
             $"마틴: {_position.MartinStep}/{_config.MartinCount}\n" +
             $"사이클: #{_cycleCount}\n" +
-            $"세션 누적: {_sessionPnl:+0.00;-0.00} USDT",
+            $"세션 누적: {_sessionPnl:+0.0000;-0.0000} USDT",
             isStopLoss ? NotificationType.StopLoss : NotificationType.TakeProfit);
 
         OnPositionUpdated?.Invoke(this, _position);
@@ -1038,7 +1179,7 @@ public class TradingCore
             if (_gptAnalyzer == null)
             {
                 _priceAnchor = exitPrice;
-                Log($"🔄 자동반복: 기준가 → {_priceAnchor:N2} | 다음 캔들 방향 감지 대기...");
+                Log($"🔄 자동반복: 기준가 → {Px(_priceAnchor)} | 다음 캔들 방향 감지 대기...");
             }
             else
             {
@@ -1063,12 +1204,20 @@ public class TradingCore
         var currentStep = isFirstEntry ? 1 : (_position!.MartinStep + 1);
         var amount = _config.GetAmountForStep(currentStep);
 
+        // 지정가 진입: 현재가 조회 (실시간 ticker 우선)
+        decimal limitPx;
+        try { limitPx = await _data.GetCurrentPriceAsync(); }
+        catch { limitPx = price; }
+        if (limitPx <= 0) limitPx = price;
+
         var result = await _executor.PlaceOrderAsync(new OrderRequest
         {
             Symbol     = _config.Symbol,
             Side       = direction == TradeDirection.Long ? OrderSide.Buy : OrderSide.Sell,
             Direction  = direction,
             Amount     = amount,
+            Type       = OrderType.Limit,
+            Price      = limitPx,
             MarginMode = _config.MarginModeStr
         });
 
@@ -1087,6 +1236,8 @@ public class TradingCore
             Log($"[🔍TEST-1] 체결가 확인: {filledPrice:N4} | 계약수: {result.FilledSize} | 상태: {result.State}");
 
         // 포지션 업데이트
+        var qty = filledPrice > 0 ? amount / filledPrice : 0; // 이번 진입 계약수
+
         if (isFirstEntry)
         {
             _position = new Position
@@ -1095,6 +1246,7 @@ public class TradingCore
                 Status         = PositionStatus.Open,
                 MartinStep     = 1,
                 TotalAmount    = amount,
+                TotalQuantity  = qty,
                 AvgEntryPrice  = filledPrice,
                 LastEntryPrice = filledPrice,
                 OpenedAt       = DateTime.UtcNow
@@ -1102,7 +1254,7 @@ public class TradingCore
 
             var liqInfo = FormatLiquidationLog();
             var msg = $"📈 신규 진입 [{direction}] | " +
-                      $"{amount:F2} USDT @ {filledPrice:N2} | " +
+                      $"{amount:F2} USDT @ {Px(filledPrice)} | " +
                       $"1/{_config.MartinCount}단계{liqInfo}";
             Log(msg);
             await NotifyAsync(
@@ -1110,7 +1262,7 @@ public class TradingCore
                 $"심볼: {_config.Symbol}\n" +
                 $"방향: {direction}\n" +
                 $"금액: {amount:F2} USDT\n" +
-                $"진입가: {filledPrice:N2}\n" +
+                $"진입가: {Px(filledPrice)}\n" +
                 $"단계: 1/{_config.MartinCount}",
                 NotificationType.Entry);
 
@@ -1122,25 +1274,26 @@ public class TradingCore
         }
         else
         {
-            // 가중 평균 진입가 재계산
-            var prevTotal = _position.TotalAmount;
+            // 계약수 기반 가중 평균 진입가 재계산
             _position.MartinStep++;
             _position.TotalAmount   += amount;
-            _position.AvgEntryPrice  = (prevTotal * _position.AvgEntryPrice + amount * filledPrice)
-                                       / _position.TotalAmount;
+            _position.TotalQuantity += qty;
+            _position.AvgEntryPrice  = _position.TotalQuantity > 0
+                ? _position.TotalAmount / _position.TotalQuantity
+                : filledPrice;
             _position.LastEntryPrice = filledPrice;
 
             var liqInfo = FormatLiquidationLog();
             var msg = $"➕ 마틴 {_position.MartinStep}단계 [{direction}] | " +
-                      $"{amount:F2} USDT @ {filledPrice:N2} | " +
-                      $"평균가: {_position.AvgEntryPrice:N2} | " +
+                      $"{amount:F2} USDT @ {Px(filledPrice)} | " +
+                      $"평균가: {Px(_position.AvgEntryPrice)} | " +
                       $"누적: {_position.TotalAmount:F2} USDT{liqInfo}";
             Log(msg);
             await NotifyAsync(
                 $"➕ <b>마틴 {_position.MartinStep}단계</b>\n" +
                 $"심볼: {_config.Symbol}\n" +
-                $"진입가: {filledPrice:N2}\n" +
-                $"평균가: {_position.AvgEntryPrice:N2}\n" +
+                $"진입가: {Px(filledPrice)}\n" +
+                $"평균가: {Px(_position.AvgEntryPrice)}\n" +
                 $"누적금: {_position.TotalAmount:F2} USDT\n" +
                 $"단계: {_position.MartinStep}/{_config.MartinCount}",
                 NotificationType.Martin);
@@ -1154,7 +1307,7 @@ public class TradingCore
         var liq = _executor.GetLiquidationPrice();
         if (liq == null) return "";
         var modeLabel = _config.MarginModeStr == "cross" ? "교차" : "격리";
-        return $" | 청산가: {liq.Value:N2} ({modeLabel})";
+        return $" | 청산가: {Px(liq.Value)} ({modeLabel})";
     }
 
     // ═════════════════════════════════════════════
@@ -1180,10 +1333,10 @@ public class TradingCore
         var exitPrice = result.FilledPrice > 0 ? result.FilledPrice : currentPrice;
 
         var pricePct = _position.GetUnrealizedPnlPercent(exitPrice);
-        var pnlPct   = pricePct * _config.Leverage;                      // 레버리지 포함 수익률 (로그·이벤트용)
-        var pnlAmt   = _position.TotalAmount * pricePct / 100 * _config.Leverage;
+        var pnlPct   = pricePct * _config.Leverage;          // 레버리지 포함 수익률 % (표시용)
+        var pnlAmt   = _position.TotalAmount * pricePct / 100; // 실제 손익금액 (명목×가격변화율, leverage 불필요)
 
-        // 수수료: 선물은 명목가(투자금) 기준 — 레버리지는 이미 pnlAmt 계산에서 반영됨
+        // 수수료: 선물 명목금액 기준 Taker 0.05% × 진입+청산
         var fee      = _position.TotalAmount * TakerFeeRate * 2;
         var pnlNet   = pnlAmt - fee;
 
@@ -1215,9 +1368,9 @@ public class TradingCore
         // 로그 + 알림
         var emoji     = isStopLoss ? "🛑" : isForceClose ? "🔴" : "✅";
         var typeLabel = isStopLoss ? "손절" : isForceClose ? "강제청산" : "익절";
-        var logMsg    = $"{emoji} {typeLabel} | {pnlPct:+0.00;-0.00}% ({pnlAmt:+0.00;-0.00} USDT) | 수수료: -{fee:F2} USDT | 순손익: {pnlNet:+0.00;-0.00} USDT | " +
+        var logMsg    = $"{emoji} {typeLabel} | {pnlPct:+0.00;-0.00}% ({pnlAmt:+0.0000;-0.0000} USDT) | 수수료: -{fee:F4} USDT | 순손익: {pnlNet:+0.0000;-0.0000} USDT | " +
                         $"마틴 {_position.MartinStep}/{_config.MartinCount} | " +
-                        $"사이클 #{_cycleCount} | 세션 누적: {_sessionPnl:+0.00;-0.00} USDT";
+                        $"사이클 #{_cycleCount} | 세션 누적: {_sessionPnl:+0.0000;-0.0000} USDT";
         Log(logMsg);
 
         var notifyType = isStopLoss ? NotificationType.StopLoss : NotificationType.TakeProfit;
@@ -1225,12 +1378,12 @@ public class TradingCore
             $"{emoji} <b>{typeLabel} 청산</b>\n" +
             $"심볼: {_config.Symbol}\n" +
             $"수익률: {pnlPct:+0.00;-0.00}%\n" +
-            $"손익(gross): {pnlAmt:+0.00;-0.00} USDT\n" +
-            $"수수료: -{fee:F2} USDT\n" +
-            $"순손익: {pnlNet:+0.00;-0.00} USDT\n" +
+            $"손익(gross): {pnlAmt:+0.0000;-0.0000} USDT\n" +
+            $"수수료: -{fee:F4} USDT\n" +
+            $"순손익: {pnlNet:+0.0000;-0.0000} USDT\n" +
             $"마틴: {_position.MartinStep}/{_config.MartinCount}\n" +
             $"사이클: #{_cycleCount}\n" +
-            $"세션 누적: {_sessionPnl:+0.00;-0.00} USDT",
+            $"세션 누적: {_sessionPnl:+0.0000;-0.0000} USDT",
             notifyType);
 
         OnPositionUpdated?.Invoke(this, _position);
@@ -1242,7 +1395,7 @@ public class TradingCore
             if (_gptAnalyzer == null)
             {
                 _priceAnchor = exitPrice;
-                Log($"🔄 자동반복: 기준가 → {_priceAnchor:N2} | 다음 캔들 방향 감지 대기...");
+                Log($"🔄 자동반복: 기준가 → {Px(_priceAnchor)} | 다음 캔들 방향 감지 대기...");
             }
             else
             {
@@ -1387,14 +1540,13 @@ public class TradingCore
 
     /// <summary>
     /// 실제 포지션 명목가를 1단계부터의 누적 금액과 매칭해 마틴 단계를 추정.
-    /// 레버리지 적용 후의 notional을 1단계 amount × leverage 단위로 분해.
-    /// 오차 허용: ±3% (마틴 복리 체결 슬리피지 고려)
+    /// GetAmountForStep이 notional을 반환하므로 누적값을 직접 비교.
+    /// 오차 허용: ±3% (슬리피지 고려)
     /// </summary>
     private int? EstimateMartinStepFromNotional(decimal actualNotional)
     {
         if (actualNotional <= 0) return null;
 
-        // 누적 투자금 × 레버리지 = 명목가
         decimal cumInvest = 0;
         int bestStep = 0;
         decimal bestDiff = decimal.MaxValue;
@@ -1402,7 +1554,7 @@ public class TradingCore
         for (int s = 1; s <= _config.MartinCount; s++)
         {
             cumInvest += _config.GetAmountForStep(s);
-            var expectedNotional = cumInvest * _config.Leverage;
+            var expectedNotional = cumInvest; // GetAmountForStep은 notional 반환 — leverage 중복 적용 금지
             var diffPct = Math.Abs(actualNotional - expectedNotional) / expectedNotional * 100;
 
             if (diffPct < bestDiff)
@@ -1438,6 +1590,14 @@ public class TradingCore
         _logger.LogInformation(message);
         OnLogMessage?.Invoke(this, timestamped);
         _logFileSink?.Invoke(timestamped); // 파일 저장
+    }
+
+    /// <summary>가격 자릿수 자동 포맷 — 저가 토큰(0.097 등)도 유효숫자 4자리 이상 표시</summary>
+    private static string Px(decimal price)
+    {
+        if (price <= 0) return "0";
+        var digits = Math.Max(2, (int)Math.Ceiling(-Math.Log10((double)price)) + 3);
+        return price.ToString($"N{Math.Min(digits, 8)}");
     }
 
     private async Task NotifyAsync(string message, NotificationType type)

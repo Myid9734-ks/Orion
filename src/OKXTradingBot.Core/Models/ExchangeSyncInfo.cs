@@ -11,6 +11,20 @@ public class ExchangePositionInfo
     public DateTime       OpenedAt      { get; set; }
 }
 
+/// <summary>미체결 일반 주문 정보 (지정가 watchdog 용)</summary>
+public class PendingOrderInfo
+{
+    public string   OrderId    { get; set; } = "";
+    public string   Side       { get; set; } = "";   // buy | sell
+    public string   PosSide    { get; set; } = "";   // long | short
+    public string   OrdType    { get; set; } = "";   // limit | market | post_only ...
+    public decimal  Price      { get; set; }
+    public decimal  Size       { get; set; }
+    public decimal  FilledSize { get; set; }
+    public bool     ReduceOnly { get; set; }
+    public DateTime CreatedAt  { get; set; }
+}
+
 /// <summary>거래소 미체결 algo 주문 정보 (재시작 동기화용)</summary>
 public class AlgoOrderInfo
 {
