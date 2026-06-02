@@ -6,10 +6,20 @@ namespace OKXTradingBot.UI.Views;
 
 public class BuyPlanStepRow
 {
-    public string Label  { get; init; } = "";
-    public string Amount { get; init; } = "";
-    public string Color  { get; init; } = "#E0E0FF";
-    public string Note   { get; init; } = "";
+    public string Label          { get; init; } = "";
+    public string Amount         { get; init; } = "";
+    public string Color          { get; init; } = "#E0E0FF";
+    public string Note           { get; init; } = "";
+    public string Profit         { get; init; } = "";
+    public string ProfitKrw      { get; init; } = "";
+    public string Fee            { get; init; } = "";
+    public string NetProfit      { get; init; } = "";
+    public string NetProfitColor { get; init; } = "#00C853";
+    public bool   HasProfitKrw   { get; init; } = false;
+    public string ProfitColor    { get; init; } = "#00C853";
+    public string FeeColor       { get; init; } = "#888899";
+    public string WarningText    { get; init; } = "";
+    public bool   HasWarning     { get; init; } = false;
 }
 
 public partial class BuyPlanDialog : Window
@@ -20,7 +30,7 @@ public partial class BuyPlanDialog : Window
         string marginMode,
         int configuredCount,
         int effectiveCount,
-        List<(string Label, string Amount, bool IsOver)> steps,
+        List<(string Label, string Amount, bool IsOver, string Profit, string ProfitKrw, string Fee, string NetProfit, bool IsProfitWarning, bool IsNetNegative)> steps,
         decimal requiredTotal,
         decimal budget,
         string warning,
@@ -41,10 +51,20 @@ public partial class BuyPlanDialog : Window
         var stepList = this.FindControl<ItemsControl>("StepList")!;
         stepList.ItemsSource = steps.Select(s => new BuyPlanStepRow
         {
-            Label  = s.Label,
-            Amount = s.Amount,
-            Color  = s.IsOver ? "#FF5252" : "#4FC3F7",
-            Note   = s.IsOver ? "(예산 초과)" : ""
+            Label        = s.Label,
+            Amount       = s.Amount,
+            Color        = s.IsOver ? "#FF5252" : "#4FC3F7",
+            Note         = s.IsOver ? "(예산 초과)" : "",
+            Profit         = s.Profit,
+            ProfitKrw      = s.ProfitKrw,
+            HasProfitKrw   = !string.IsNullOrEmpty(s.ProfitKrw),
+            Fee            = s.Fee,
+            NetProfit      = s.NetProfit,
+            NetProfitColor = s.IsNetNegative ? "#FF5252" : "#00C853",
+            ProfitColor    = s.IsProfitWarning ? "#FF5252" : "#00C853",
+            FeeColor       = "#FF9800",
+            WarningText    = s.IsProfitWarning ? "⚠ 수수료>수익" : "",
+            HasWarning     = s.IsProfitWarning
         }).ToList();
 
         // 합계

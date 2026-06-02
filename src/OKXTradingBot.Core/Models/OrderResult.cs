@@ -21,7 +21,8 @@ public class OrderResult
     public string  OrderId      { get; set; } = string.Empty;
     public decimal FilledPrice  { get; set; }
     public decimal FilledAmount { get; set; }
-    public decimal FilledSize   { get; set; } // 계약 수 (디버깅용)
+    public decimal FilledSize      { get; set; } // 계약 수
+    public decimal FilledNotional  { get; set; } // 실제 명목금액 (contracts × ctVal × price)
     public string? State        { get; set; } // 주문 상태 (filled / partially_filled 등)
     public string? ErrorMessage { get; set; }
     public DateTime Timestamp   { get; set; } = DateTime.UtcNow;

@@ -83,18 +83,41 @@ public class MainWindowViewModel : ReactiveObject
 
     public ObservableCollection<TradeRecord> FilteredTradeHistory { get; } = new();
 
-    private decimal _filteredTotalPnl;
-    private int     _filteredWinCount;
-    private int     _filteredLossCount;
+    private decimal  _filteredTotalPnl;
+    private decimal  _filteredTotalFee;
+    private TimeSpan _filteredTotalDuration;
+    private int      _filteredWinCount;
+    private int      _filteredLossCount;
+    private decimal  _usdKrwRate = 0m;
 
-    public string FilteredTotalPnlText  => $"{_filteredTotalPnl:+0.00;-0.00;0.00} USDT";
+    public string FilteredTotalPnlText  => $"{_filteredTotalPnl:+0.0000;-0.0000;0.0000} USDT";
+    public string FilteredTotalPnlKrwText => _usdKrwRate > 0
+        ? $"≈ ₩{_filteredTotalPnl * _usdKrwRate:N0}" : "";
     public IBrush FilteredTotalPnlBrush => _filteredTotalPnl > 0 ? Brushes.LightGreen
                                          : _filteredTotalPnl < 0 ? Brushes.Tomato : Brushes.Gray;
     public string FilteredTradeCountText => $"{_filteredWinCount + _filteredLossCount}회";
-    public string FilteredWinRateText    => (_filteredWinCount + _filteredLossCount) > 0
-        ? $"{(double)_filteredWinCount / (_filteredWinCount + _filteredLossCount) * 100:F1}%" : "-";
-    public string FilteredAvgPnlText     => (_filteredWinCount + _filteredLossCount) > 0
-        ? $"{_filteredTotalPnl / (_filteredWinCount + _filteredLossCount):+0.00;-0.00} USDT" : "-";
+
+    // 평균 소요시간
+    private int FilteredTradeCount => _filteredWinCount + _filteredLossCount;
+    public string FilteredAvgDurationText => FilteredTradeCount > 0
+        ? FormatDuration(_filteredTotalDuration / FilteredTradeCount) : "-";
+
+    // 총 수수료
+    public string FilteredTotalFeeText    => $"-{_filteredTotalFee:0.0000} USDT";
+    public string FilteredTotalFeeKrwText => _usdKrwRate > 0
+        ? $"≈ ₩{_filteredTotalFee * _usdKrwRate:N0}" : "";
+
+    public string FilteredAvgPnlText     => FilteredTradeCount > 0
+        ? $"{_filteredTotalPnl / FilteredTradeCount:+0.0000;-0.0000} USDT" : "-";
+    public string FilteredAvgPnlKrwText  => _usdKrwRate > 0 && FilteredTradeCount > 0
+        ? $"≈ ₩{_filteredTotalPnl / FilteredTradeCount * _usdKrwRate:N0}" : "";
+
+    private static string FormatDuration(TimeSpan ts)
+    {
+        if (ts.TotalMinutes < 1)  return $"{ts.Seconds}초";
+        if (ts.TotalHours   < 1)  return $"{(int)ts.TotalMinutes}분 {ts.Seconds}초";
+        return $"{(int)ts.TotalHours}시간 {ts.Minutes}분";
+    }
 
     public IBrush PnlPeriodAllBg    => _selectedPnlPeriod == "전체" ? _activePeriodBg : Brushes.Transparent;
     public IBrush PnlPeriodDailyBg  => _selectedPnlPeriod == "일간" ? _activePeriodBg : Brushes.Transparent;
@@ -161,15 +184,21 @@ public class MainWindowViewModel : ReactiveObject
         int seq = 1;
         foreach (var r in records) { r.Number = seq++; FilteredTradeHistory.Add(r); }
 
-        _filteredTotalPnl  = records.Sum(r => r.PnlAmount);
-        _filteredWinCount  = records.Count(r => r.PnlAmount > 0);
-        _filteredLossCount = records.Count(r => r.PnlAmount <= 0);
+        _filteredTotalPnl      = records.Sum(r => r.PnlAmount);
+        _filteredTotalFee      = records.Sum(r => r.Fee);
+        _filteredTotalDuration = records.Aggregate(TimeSpan.Zero, (acc, r) => acc + r.Duration);
+        _filteredWinCount      = records.Count(r => r.PnlAmount > 0);
+        _filteredLossCount     = records.Count(r => r.PnlAmount <= 0);
 
         this.RaisePropertyChanged(nameof(FilteredTotalPnlText));
+        this.RaisePropertyChanged(nameof(FilteredTotalPnlKrwText));
         this.RaisePropertyChanged(nameof(FilteredTotalPnlBrush));
         this.RaisePropertyChanged(nameof(FilteredTradeCountText));
-        this.RaisePropertyChanged(nameof(FilteredWinRateText));
+        this.RaisePropertyChanged(nameof(FilteredAvgDurationText));
+        this.RaisePropertyChanged(nameof(FilteredTotalFeeText));
+        this.RaisePropertyChanged(nameof(FilteredTotalFeeKrwText));
         this.RaisePropertyChanged(nameof(FilteredAvgPnlText));
+        this.RaisePropertyChanged(nameof(FilteredAvgPnlKrwText));
     }
 
     private SymbolTabViewModel? _selectedSymbolTab;
@@ -363,6 +392,10 @@ public class MainWindowViewModel : ReactiveObject
 
         _ = RefreshSymbolsAsync();
         _ = FetchBalanceAsync();
+        _ = FetchExchangeRateAsync();
+        // 앱 시작 시 GPT API Key가 저장돼 있으면 실제 모델 목록 자동 조회
+        if (!string.IsNullOrWhiteSpace(_gptApiKey))
+            _ = RefreshGptModelsAsync();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -414,8 +447,6 @@ public class MainWindowViewModel : ReactiveObject
             if (e.PropertyName == nameof(SymbolTabViewModel.IsRunning))
             {
                 this.RaisePropertyChanged(nameof(IsAnyRunning));
-                if (tab.IsRunning && CanAddTab)
-                    AddSymbolTab();
             }
         };
 
@@ -452,6 +483,9 @@ public class MainWindowViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(CanAddTab));
         this.RaisePropertyChanged(nameof(AddTabTooltip));
         OnTabChanged();
+
+        // 탭 닫을 때 즉시 저장 — 재시작 시 닫힌 탭이 복원되는 문제 방지
+        _ = SaveSettingsAsync();
     }
 
     private void OnTabChanged()
@@ -630,6 +664,11 @@ public class MainWindowViewModel : ReactiveObject
     private void ToggleTradingMode()
     {
         IsBacktestMode = !IsBacktestMode;
+        // 모든 탭에 모드 변경 통보 (IsLiveMode 갱신 + 실거래 전환 시 잔고 자동 재조회)
+        foreach (var tab in SymbolTabs)
+            tab.NotifyModeChanged(!IsBacktestMode);
+        if (!IsBacktestMode)
+            _ = FetchBalanceAsync();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -843,6 +882,25 @@ public class MainWindowViewModel : ReactiveObject
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // 환율 조회
+    // ═══════════════════════════════════════════════════════════════════
+
+    private static readonly System.Net.Http.HttpClient _httpClient = new();
+
+    private async Task FetchExchangeRateAsync()
+    {
+        try
+        {
+            var json = await _httpClient.GetStringAsync("https://api.frankfurter.app/latest?from=USD&to=KRW");
+            var doc  = System.Text.Json.JsonDocument.Parse(json);
+            _usdKrwRate = doc.RootElement.GetProperty("rates").GetProperty("KRW").GetDecimal();
+            this.RaisePropertyChanged(nameof(FilteredTotalPnlKrwText));
+            this.RaisePropertyChanged(nameof(FilteredAvgPnlKrwText));
+        }
+        catch { }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // 잔고 조회
     // ═══════════════════════════════════════════════════════════════════
 
@@ -896,6 +954,10 @@ public class MainWindowViewModel : ReactiveObject
             QuietEnd               = QuietEnd,
             Tabs                   = SymbolTabs.Select(t => t.ToSettings()).ToList(),
         });
+
+        // GPT API Key 변경 시 실제 모델 목록 자동 갱신
+        if (!string.IsNullOrWhiteSpace(GptApiKey) && GptApiKey != _savedSnapshot?.GptApiKey)
+            _ = RefreshGptModelsAsync();
 
         // 스냅샷 갱신
         _savedSnapshot    = BuildGlobalSnapshot();

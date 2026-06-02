@@ -105,7 +105,8 @@ public class OkxRestClient
     {
         try
         {
-            var json = await GetPrivateAsync($"/api/v5/account/trade-fee?instType=SWAP&instId={instId}");
+            // instId만 지정 (instType 동시 지정 시 50016 오류 발생)
+            var json = await GetPrivateAsync($"/api/v5/account/trade-fee?instType=SWAP&uly={instId.Replace("-SWAP","").Replace("-PERP","")}");
             var doc  = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("data", out var data) || data.GetArrayLength() == 0)
                 return (0.0005m, 0.0002m);
@@ -140,16 +141,33 @@ public class OkxRestClient
 
         var json = await PostPrivateAsync("/api/v5/account/set-leverage", body);
         var doc  = JsonDocument.Parse(json);
-        return doc.RootElement.GetProperty("code").GetString() == "0";
+        var code = doc.RootElement.GetProperty("code").GetString();
+        if (code != "0")
+            _logger.LogWarning("[Leverage] 설정 실패: {instId} x{lev} [{mode}] | raw={json}",
+                instId, leverage, mgnMode, json);
+        return code == "0";
     }
 
-    /// <summary>시장가 주문 (무기한 선물)</summary>
+    /// <summary>시장가 주문 (무기한 선물). sz = USDT 명목금액 → 내부적으로 계약수 환산.</summary>
     public async Task<OrderResult> PlaceMarketOrderAsync(
         string instId, string side, string posSide, decimal sz, string mgnMode = "cross")
     {
-        // side: buy / sell
-        // posSide: long / short (양방향 포지션 모드 기준)
-        // tgtCcy=quote_ccy: sz를 계약 수가 아닌 USDT 금액으로 해석하도록 명시
+        // SWAP(선물)은 tgtCcy=quote_ccy 미지원 → 현재가 조회 후 계약수로 변환 필수
+        decimal currentPx;
+        try { currentPx = await GetTickerPriceAsync(instId); }
+        catch (Exception ex)
+        {
+            _logger.LogError("[🔍TEST-1] 시장가 주문 전 현재가 조회 실패: {msg}", ex.Message);
+            return new OrderResult { Success = false, ErrorMessage = $"현재가 조회 실패: {ex.Message}" };
+        }
+
+        var contracts = await ConvertUsdtToContractsAsync(instId, sz, currentPx, 1);
+        if (contracts <= 0)
+        {
+            _logger.LogError("[🔍TEST-1] 계약수 환산 실패: usdt={u} px={p}", sz, currentPx);
+            return new OrderResult { Success = false, ErrorMessage = "계약수 환산 실패" };
+        }
+
         var body = JsonSerializer.Serialize(new
         {
             instId,
@@ -157,8 +175,8 @@ public class OkxRestClient
             side,
             posSide,
             ordType = "market",
-            sz      = sz.ToString("F4"),
-            tgtCcy  = "quote_ccy"
+            sz      = contracts.ToString("0.########")
+            // tgtCcy 제거 — SWAP은 미지원 (SPOT 전용)
         });
 
         _logger.LogInformation("[🔍TEST-1] 시장가 주문 요청: {body}", body);
@@ -283,15 +301,22 @@ public class OkxRestClient
         decimal usdtAmount, decimal px, int leverage,
         string mgnMode = "cross", bool reduceOnly = false)
     {
+        var (ctVal, _, _) = await GetInstrumentSpecAsync(instId);
         var contracts = await ConvertUsdtToContractsAsync(instId, usdtAmount, px, leverage);
         if (contracts <= 0)
         {
             _logger.LogError("[Limit] 계약수 환산 실패: usdt={u} px={p} lev={l}", usdtAmount, px, leverage);
             return new OrderResult { Success = false, ErrorMessage = "계약수 환산 실패" };
         }
-        _logger.LogInformation("[Limit] {usdt} USDT ÷ ({px} × ctVal) = {ct} 계약",
-            usdtAmount, px, contracts);
-        return await PlaceLimitOrderAsync(instId, side, posSide, contracts, px, mgnMode, reduceOnly);
+
+        // 실제 명목금액 = 체결된 계약수 × ctVal × 가격
+        var actualNotional = contracts * ctVal * px;
+        _logger.LogInformation("[Limit] {usdt} USDT → {ct} 계약 (실제 명목: {notional:F4} USDT)",
+            usdtAmount, contracts, actualNotional);
+
+        var result = await PlaceLimitOrderAsync(instId, side, posSide, contracts, px, mgnMode, reduceOnly);
+        if (result.Success) result.FilledNotional = actualNotional;
+        return result;
     }
 
     /// <summary>지정가 주문 가격 정정 (newPx).</summary>
@@ -308,6 +333,8 @@ public class OkxRestClient
         var json = await PostPrivateAsync("/api/v5/trade/amend-order", body);
         var doc  = JsonDocument.Parse(json);
         var code = doc.RootElement.GetProperty("code").GetString();
+        if (code != "0")
+            _logger.LogWarning("[Amend] 정정 실패: ordId={oid} newPx={px} | raw={json}", ordId, newPx, json);
         return code == "0";
     }
 
@@ -315,9 +342,12 @@ public class OkxRestClient
     public async Task<bool> CancelOrderAsync(string instId, string ordId)
     {
         var body = JsonSerializer.Serialize(new { instId, ordId });
+        _logger.LogInformation("[Cancel] 주문 취소 요청: ordId={oid}", ordId);
         var json = await PostPrivateAsync("/api/v5/trade/cancel-order", body);
         var doc  = JsonDocument.Parse(json);
         var code = doc.RootElement.GetProperty("code").GetString();
+        if (code != "0")
+            _logger.LogWarning("[Cancel] 취소 실패: ordId={oid} | raw={json}", ordId, json);
         return code == "0";
     }
 
@@ -438,11 +468,27 @@ public class OkxRestClient
             posSide
         });
 
+        _logger.LogInformation("[Close] 시장가 청산 요청: {body}", body);
         var json = await PostPrivateAsync("/api/v5/trade/close-position", body);
         var doc  = JsonDocument.Parse(json);
         var code = doc.RootElement.GetProperty("code").GetString();
 
-        return new OrderResult { Success = code == "0" };
+        if (code == "0")
+        {
+            _logger.LogInformation("[Close] 청산 성공: {symbol} {posSide}", instId, posSide);
+            return new OrderResult { Success = true };
+        }
+
+        // 실패 — sCode/sMsg 추출해 원인 진단 (청산 실패는 실거래 최대 위험)
+        string errMsg = $"[{code}]";
+        if (doc.RootElement.TryGetProperty("data", out var data) && data.GetArrayLength() > 0)
+        {
+            var sCode = data[0].TryGetProperty("sCode", out var sc) ? sc.GetString() : code;
+            var sMsg  = data[0].TryGetProperty("sMsg",  out var sm) ? sm.GetString() : "unknown";
+            errMsg = $"[{sCode}] {sMsg}";
+        }
+        _logger.LogError("[Close] ❌ 청산 실패: {err} | raw={json}", errMsg, json);
+        return new OrderResult { Success = false, ErrorMessage = errMsg };
     }
 
     // ─────────────────────────────────────────────
@@ -458,8 +504,14 @@ public class OkxRestClient
         decimal sz, decimal triggerPx, string mgnMode = "cross",
         bool reduceOnly = false)
     {
-        // tgtCcy=quote_ccy: sz를 계약 수가 아닌 USDT 금액으로 해석
-        // 시장가 주문(PlaceMarketOrderAsync)과 동일한 단위 사용 필수
+        // SWAP은 tgtCcy 미지원 → triggerPx 기준으로 계약수 변환
+        var contracts = await ConvertUsdtToContractsAsync(instId, sz, triggerPx, 1);
+        if (contracts <= 0)
+        {
+            _logger.LogError("[🔍TEST-2] 트리거 계약수 환산 실패: usdt={u} triggerPx={p}", sz, triggerPx);
+            return new OrderResult { Success = false, ErrorMessage = "트리거 계약수 환산 실패" };
+        }
+
         var body = JsonSerializer.Serialize(new
         {
             instId,
@@ -467,8 +519,7 @@ public class OkxRestClient
             side,
             posSide,
             ordType       = "trigger",
-            sz            = sz.ToString("F4"),
-            tgtCcy        = "quote_ccy",
+            sz            = contracts.ToString("0.########"),
             triggerPx     = triggerPx.ToString("0.########"),
             orderPx       = "-1",  // -1 = 트리거 발동 시 시장가로 즉시 체결 (미체결 방지)
             triggerPxType = "last",
@@ -717,16 +768,18 @@ public class OkxRestClient
     private async Task<string> GetPublicAsync(string path)
     {
         var resp = await _http.GetAsync(path);
-        resp.EnsureSuccessStatusCode();
-        return await resp.Content.ReadAsStringAsync();
+        var json = await resp.Content.ReadAsStringAsync();
+        EnsureSuccessOrLog("GET(public)", path, resp, json);
+        return json;
     }
 
     private async Task<string> GetPrivateAsync(string path)
     {
         var req = BuildPrivateRequest(HttpMethod.Get, path, "");
         var resp = await _http.SendAsync(req);
-        resp.EnsureSuccessStatusCode();
-        return await resp.Content.ReadAsStringAsync();
+        var json = await resp.Content.ReadAsStringAsync();
+        EnsureSuccessOrLog("GET", path, resp, json);
+        return json;
     }
 
     private async Task<string> PostPrivateAsync(string path, string body)
@@ -734,8 +787,22 @@ public class OkxRestClient
         var req = BuildPrivateRequest(HttpMethod.Post, path, body);
         req.Content = new StringContent(body, Encoding.UTF8, "application/json");
         var resp = await _http.SendAsync(req);
-        resp.EnsureSuccessStatusCode();
-        return await resp.Content.ReadAsStringAsync();
+        var json = await resp.Content.ReadAsStringAsync();
+        EnsureSuccessOrLog("POST", path, resp, json);
+        return json;
+    }
+
+    /// <summary>
+    /// HTTP 상태가 실패면 응답 본문(OKX 에러 상세 포함)을 로그에 남긴 뒤 throw.
+    /// 기존 EnsureSuccessStatusCode() 는 본문을 버려 실거래 장애 원인 추적이 불가능했음.
+    /// </summary>
+    private void EnsureSuccessOrLog(string method, string path, HttpResponseMessage resp, string body)
+    {
+        if (resp.IsSuccessStatusCode) return;
+        _logger.LogError("[HTTP] {method} {path} → {status} ({code}) | body={body}",
+            method, path, (int)resp.StatusCode, resp.StatusCode, body);
+        throw new HttpRequestException(
+            $"OKX {method} {path} HTTP {(int)resp.StatusCode} {resp.StatusCode}: {body}");
     }
 
     /// <summary>

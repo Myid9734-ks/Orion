@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:OKXTradingBot.UI.Views"
         x:Class="OKXTradingBot.UI.Views.StepParamsDialog"
         Title="진입 커스텀 설정"
         Width="620" MinHeight="200"
@@ -106,7 +107,7 @@
                                HorizontalAlignment="Center"/>
                   </Border>
                   <!-- 진입 간격 -->
-                  <NumericUpDown Grid.Column="1"
+                  <local:NoWheelNumericUpDown Grid.Column="1"
                                  Value="{Binding Gap}"
                                  Minimum="0.1" Maximum="20" Increment="0.1"
                                  FormatString="F2"
@@ -114,7 +115,7 @@
                                  Margin="3,0"
                                  IsEnabled="{Binding GapEditable}"/>
                   <!-- 배수/비율 (배수·피보나치 모드에서만 표시) -->
-                  <NumericUpDown Grid.Column="2"
+                  <local:NoWheelNumericUpDown Grid.Column="2"
                                  Value="{Binding Weight}"
                                  Minimum="0.1" Maximum="9999" Increment="0.5"
                                  FormatString="F1"

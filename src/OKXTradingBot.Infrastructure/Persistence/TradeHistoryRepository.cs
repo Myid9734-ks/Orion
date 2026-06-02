@@ -47,10 +47,20 @@ public class TradeHistoryRepository
                 is_stop_loss INTEGER NOT NULL DEFAULT 0,
                 leverage     INTEGER NOT NULL DEFAULT 1,
                 opened_at    TEXT    NOT NULL,
-                closed_at    TEXT    NOT NULL
+                closed_at    TEXT    NOT NULL,
+                fee          REAL    NOT NULL DEFAULT 0
             );
             """;
         cmd.ExecuteNonQuery();
+
+        // 기존 DB 마이그레이션 — fee 컬럼이 없으면 추가
+        try
+        {
+            using var altCmd = conn.CreateCommand();
+            altCmd.CommandText = "ALTER TABLE trades ADD COLUMN fee REAL NOT NULL DEFAULT 0;";
+            altCmd.ExecuteNonQuery();
+        }
+        catch { /* 이미 존재하면 무시 */ }
     }
 
     // ─────────────────────────────────────────────
@@ -67,11 +77,11 @@ public class TradeHistoryRepository
             INSERT INTO trades
                 (symbol, direction, avg_entry, exit_price, total_amount,
                  martin_step, martin_max, pnl_percent, pnl_amount,
-                 is_stop_loss, leverage, opened_at, closed_at)
+                 is_stop_loss, leverage, opened_at, closed_at, fee)
             VALUES
                 ($symbol, $dir, $avgEntry, $exitPrice, $totalAmount,
                  $martinStep, $martinMax, $pnlPct, $pnlAmt,
-                 $isStopLoss, $leverage, $openedAt, $closedAt);
+                 $isStopLoss, $leverage, $openedAt, $closedAt, $fee);
             """;
 
         cmd.Parameters.AddWithValue("$symbol",      trade.Symbol);
@@ -87,6 +97,7 @@ public class TradeHistoryRepository
         cmd.Parameters.AddWithValue("$leverage",    trade.Leverage);
         cmd.Parameters.AddWithValue("$openedAt",    trade.OpenedAt.ToString("o"));
         cmd.Parameters.AddWithValue("$closedAt",    trade.ClosedAt.ToString("o"));
+        cmd.Parameters.AddWithValue("$fee",         (double)trade.Fee);
 
         cmd.ExecuteNonQuery();
     }
@@ -133,7 +144,8 @@ public class TradeHistoryRepository
                 IsStopLoss    = reader.GetInt32(reader.GetOrdinal("is_stop_loss")) == 1,
                 Leverage      = reader.GetInt32(reader.GetOrdinal("leverage")),
                 OpenedAt      = DateTime.Parse(reader.GetString(reader.GetOrdinal("opened_at"))),
-                ClosedAt      = DateTime.Parse(reader.GetString(reader.GetOrdinal("closed_at")))
+                ClosedAt      = DateTime.Parse(reader.GetString(reader.GetOrdinal("closed_at"))),
+                Fee           = reader.IsDBNull(reader.GetOrdinal("fee")) ? 0m : (decimal)reader.GetDouble(reader.GetOrdinal("fee"))
             });
         }
 
@@ -181,7 +193,8 @@ public class TradeHistoryRepository
                 IsStopLoss    = reader.GetInt32(reader.GetOrdinal("is_stop_loss")) == 1,
                 Leverage      = reader.GetInt32(reader.GetOrdinal("leverage")),
                 OpenedAt      = DateTime.Parse(reader.GetString(reader.GetOrdinal("opened_at"))),
-                ClosedAt      = DateTime.Parse(reader.GetString(reader.GetOrdinal("closed_at")))
+                ClosedAt      = DateTime.Parse(reader.GetString(reader.GetOrdinal("closed_at"))),
+                Fee           = reader.IsDBNull(reader.GetOrdinal("fee")) ? 0m : (decimal)reader.GetDouble(reader.GetOrdinal("fee"))
             });
         }
 

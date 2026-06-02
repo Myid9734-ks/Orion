@@ -23,7 +23,8 @@ public class TradingCore
     private readonly TradeConfig    _config;
     private readonly NotificationConfig _notifyConfig;
     private readonly ILogger<TradingCore> _logger;
-    private readonly Action<string>? _logFileSink; // 로그 파일 저장용 콜백
+    private readonly Action<string>? _logFileSink;           // 로그 파일 저장용 콜백
+    private Func<string, DateTime, int>? _getDbTradeCount;   // DB 기록 건수 조회 콜백 (누락 감지용)
 
     private decimal _takerFeeRate = 0.0005m; // 시작 시 OKX API로 조회
     private decimal _makerFeeRate = 0.0002m; // 시작 시 OKX API로 조회
@@ -66,6 +67,9 @@ public class TradingCore
     /// <summary>거래(사이클) 완료 — UI에서 TradeRecord 생성, DB 저장 등에 사용</summary>
     public event EventHandler<TradeClosedEventArgs>? OnTradeClosed;
 
+    /// <summary>봇 완전 종료 — 자동반복 OFF 사이클 완료 시 발사</summary>
+    public event EventHandler? OnBotStopped;
+
     // ─────────────────────────────────────────────
     // 읽기 전용 상태
     // ─────────────────────────────────────────────
@@ -87,15 +91,17 @@ public class TradingCore
         INotifier? notifier = null,
         NotificationConfig? notificationConfig = null,
         IGptAnalyzer? gptAnalyzer = null,
-        Action<string>? logFileSink = null)
+        Action<string>? logFileSink = null,
+        Func<string, DateTime, int>? getDbTradeCount = null)
     {
         _data         = dataProvider;
         _executor     = orderExecutor;
         _config       = config;
         _logger       = logger;
         _notifier     = notifier;
-        _gptAnalyzer  = gptAnalyzer;
-        _logFileSink  = logFileSink;
+        _gptAnalyzer      = gptAnalyzer;
+        _logFileSink      = logFileSink;
+        _getDbTradeCount  = getDbTradeCount;
         _notifyConfig = notificationConfig ?? new NotificationConfig { Enabled = false };
 
         _data.OnCandleCompleted += OnCandleCompletedAsync;
@@ -214,16 +220,15 @@ public class TradingCore
         if (_preOrderMode) StartExitWatchdog(ct);
     }
 
-    public async Task StopAsync()
+    /// <summary>
+    /// 현재 사이클 완료 후 종료 — 자동반복 OFF와 동일.
+    /// 모든 주문/감시 유지, 익절/손절 체결 후 자연 종료.
+    /// </summary>
+    public Task StopAsync()
     {
-        _running = false;
-        await StopExitWatchdog();
-        await _data.StopAsync();
-
-        // 예비주문/익절주문은 취소하지 않음 — OKX 서버에서 사이클 유지
-        var msg = $"⏹ 봇 중지 | 완료 사이클: {_cycleCount}회 | 세션 손익: {_sessionPnl:+0.00;-0.00;0.00} USDT";
-        Log(msg);
-        await NotifyAsync(msg, NotificationType.BotStartStop);
+        _autoRepeat = false;
+        Log("⏹ 중지 예약 — 현재 사이클 완료 후 종료 (마틴/익절/감시 계속 유지)");
+        return Task.CompletedTask;
     }
 
     // ═════════════════════════════════════════════
@@ -344,8 +349,9 @@ public class TradingCore
     /// <summary>예비주문/익절주문 취소 후 봇 중지 — 포지션은 유지 (매매감지 X)</summary>
     public async Task ForceCloseAsync()
     {
-        Log("🔴 포지션 강제 종료 요청 — 예비/익절 주문 취소 후 포지션 유지");
+        Log("🔴 포지션 강제 종료 요청 — 예비/익절 주문 취소 + 즉시 시장가 청산");
 
+        // 1) 예비주문 / 익절주문 일괄 취소
         if (_preOrderMode)
         {
             try
@@ -357,15 +363,45 @@ public class TradingCore
             {
                 Log($"⚠️ algo 취소 실패: {ex.Message}");
             }
+        }
 
+        // 2) 포지션 시장가 강제 청산
+        if (_position.Status == PositionStatus.Open)
+        {
+            try
+            {
+                var result = await _executor.ClosePositionAsync(_config.Symbol, _position.Direction);
+                if (result.Success)
+                    Log("✅ 포지션 시장가 청산 완료");
+                else
+                    Log($"⚠️ 포지션 청산 실패: {result.ErrorMessage}");
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ 포지션 청산 예외: {ex.Message}");
+            }
+
+            // 포지션 상태 초기화 → UI 패널 공백 처리
+            _position = new Position();
+            OnPositionUpdated?.Invoke(this, _position);
+        }
+        else
+        {
+            Log("ℹ️ 열린 포지션 없음 — 청산 생략");
+        }
+
+        // 3) Private WS 중지
+        if (_preOrderMode)
+        {
             try { await _executor.StopPrivateStreamAsync(); }
             catch (Exception ex) { Log($"⚠️ Private WS 중지 실패: {ex.Message}"); }
         }
 
         _running = false;
+        await StopExitWatchdog();
         await _data.StopAsync();
 
-        var msg = $"🔴 강제 종료 | 포지션 유지 중 | 완료 사이클: {_cycleCount}회 | 세션 손익: {_sessionPnl:+0.00;-0.00;0.00} USDT";
+        var msg = $"🔴 강제 종료 완료 | 완료 사이클: {_cycleCount}회 | 세션 손익: {_sessionPnl:+0.00;-0.00;0.00} USDT";
         Log(msg);
         await NotifyAsync(msg, NotificationType.BotStartStop);
     }
@@ -1152,6 +1188,7 @@ public class TradingCore
             MartinMax     = _config.MartinCount,
             PnlPercent    = pnlPct,
             PnlAmount     = pnlNet,
+            Fee           = fee,
             IsStopLoss    = isStopLoss,
             Leverage      = _config.Leverage,
             OpenedAt      = _position.OpenedAt,
@@ -1196,6 +1233,7 @@ public class TradingCore
         {
             Log(_autoRepeat ? "⏸ 매매 종료" : "⏸ 자동반복 OFF — 매매 종료");
             _running = false;
+            OnBotStopped?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -1239,8 +1277,12 @@ public class TradingCore
         else
             Log($"[🔍TEST-1] 체결가 확인: {filledPrice:N4} | 계약수: {result.FilledSize} | 상태: {result.State}");
 
-        // 포지션 업데이트
-        var qty = filledPrice > 0 ? amount / filledPrice : 0; // 이번 진입 계약수
+        // 실제 명목금액 (계약수 기반). FilledNotional 없으면 입력금액 사용
+        var actualAmount = result.FilledNotional > 0 ? result.FilledNotional : amount;
+        if (result.FilledNotional > 0 && Math.Abs(result.FilledNotional - amount) > 0.5m)
+            Log($"[명목금액] 입력 {amount:F4} USDT → 실제 {actualAmount:F4} USDT (계약 반올림)");
+
+        var qty = filledPrice > 0 ? actualAmount / filledPrice : 0;
 
         if (isFirstEntry)
         {
@@ -1249,7 +1291,7 @@ public class TradingCore
                 Direction      = direction,
                 Status         = PositionStatus.Open,
                 MartinStep     = 1,
-                TotalAmount    = amount,
+                TotalAmount    = actualAmount,
                 TotalQuantity  = qty,
                 AvgEntryPrice  = filledPrice,
                 LastEntryPrice = filledPrice,
@@ -1280,7 +1322,7 @@ public class TradingCore
         {
             // 계약수 기반 가중 평균 진입가 재계산
             _position.MartinStep++;
-            _position.TotalAmount   += amount;
+            _position.TotalAmount   += actualAmount;
             _position.TotalQuantity += qty;
             _position.AvgEntryPrice  = _position.TotalQuantity > 0
                 ? _position.TotalAmount / _position.TotalQuantity
@@ -1363,6 +1405,7 @@ public class TradingCore
             MartinMax     = _config.MartinCount,
             PnlPercent    = pnlPct,
             PnlAmount     = pnlNet,
+            Fee           = fee,
             IsStopLoss    = isStopLoss,
             Leverage      = _config.Leverage,
             OpenedAt      = _position.OpenedAt,
@@ -1416,6 +1459,7 @@ public class TradingCore
                 Log("⏸ 자동반복 OFF — 매매 종료");
 
             _running = false;
+            OnBotStopped?.Invoke(this, EventArgs.Empty);
         }
     }
 
@@ -1510,8 +1554,10 @@ public class TradingCore
     {
         try
         {
-            var history = await _executor.GetAlgoOrderHistoryAsync(_config.Symbol, 20);
-            var cutoffMs = DateTimeOffset.UtcNow.AddHours(-24).ToUnixTimeMilliseconds();
+            var since    = DateTime.UtcNow.AddHours(-24);
+            var cutoffMs = new DateTimeOffset(since).ToUnixTimeMilliseconds();
+
+            var history = await _executor.GetAlgoOrderHistoryAsync(_config.Symbol, 50);
             var recentTps = history
                 .Where(h => h.IsClose && h.UpdatedAtMs >= cutoffMs)
                 .OrderByDescending(h => h.UpdatedAtMs)
@@ -1519,17 +1565,34 @@ public class TradingCore
 
             if (recentTps.Count == 0) return;
 
+            // DB 기록 건수와 비교해 실제 누락 건만 경고
+            var dbCount    = _getDbTradeCount?.Invoke(_config.Symbol, since) ?? -1;
+            var missedCount = dbCount >= 0 ? Math.Max(0, recentTps.Count - dbCount) : recentTps.Count;
+
             var latest = recentTps[0];
-            var when = DateTimeOffset.FromUnixTimeMilliseconds(latest.UpdatedAtMs).LocalDateTime;
-            Log($"⚠️ 앱 종료 기간 중 익절 체결 감지: 최근 {recentTps.Count}건 | 마지막: {when:yyyy-MM-dd HH:mm} @ {latest.TpTriggerPx:N4}");
-            Log($"   ↳ DB 기록 누락 가능성 — OKX 거래 내역에서 직접 확인 권장");
+            var when   = DateTimeOffset.FromUnixTimeMilliseconds(latest.UpdatedAtMs).LocalDateTime;
+
+            if (dbCount >= 0)
+                Log($"🔍 익절 히스토리: OKX {recentTps.Count}건 / DB {dbCount}건 → 누락 추정 {missedCount}건");
+            else
+                Log($"🔍 익절 히스토리: OKX {recentTps.Count}건 (DB 미확인)");
+
+            if (missedCount == 0)
+            {
+                Log($"✅ DB 기록 정상 — 누락 없음");
+                return;
+            }
+
+            Log($"⚠️ DB 미기록 {missedCount}건 추정 | 마지막: {when:MM-dd HH:mm} @ {latest.TpTriggerPx:N4}");
+            Log($"   ↳ OKX 거래 내역에서 직접 확인 권장");
 
             await NotifyAsync(
-                $"ℹ️ <b>앱 종료 기간 TP 체결 감지</b>\n" +
+                $"⚠️ <b>DB 미기록 거래 감지</b>\n" +
                 $"심볼: {_config.Symbol}\n" +
-                $"최근 24h 익절 발동: {recentTps.Count}건\n" +
-                $"마지막 발동: {when:MM-dd HH:mm} @ {latest.TpTriggerPx:N4}\n" +
-                $"→ DB 기록 누락 가능, OKX 거래 내역 확인 필요",
+                $"OKX 24h 익절: {recentTps.Count}건\n" +
+                $"DB 기록: {(dbCount >= 0 ? dbCount.ToString() : "미확인")}건\n" +
+                $"누락 추정: {missedCount}건\n" +
+                $"마지막: {when:MM-dd HH:mm} @ {latest.TpTriggerPx:N4}",
                 NotificationType.BotStartStop);
         }
         catch (Exception ex)
@@ -1555,11 +1618,16 @@ public class TradingCore
         int bestStep = 0;
         decimal bestDiff = decimal.MaxValue;
 
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"[마틴 추정] 실제 명목 {actualNotional:F2} USDT → 비교: ");
+
         for (int s = 1; s <= _config.MartinCount; s++)
         {
             cumInvest += _config.GetAmountForStep(s);
-            var expectedNotional = cumInvest; // GetAmountForStep은 notional 반환 — leverage 중복 적용 금지
+            var expectedNotional = cumInvest;
             var diffPct = Math.Abs(actualNotional - expectedNotional) / expectedNotional * 100;
+
+            sb.Append($"{s}단계={expectedNotional:F2}({diffPct:F1}%) ");
 
             if (diffPct < bestDiff)
             {
@@ -1568,8 +1636,11 @@ public class TradingCore
             }
         }
 
-        // 최소 오차가 3% 이내일 때만 신뢰
-        return bestDiff <= 3m ? bestStep : (int?)null;
+        var result = bestDiff <= 3m ? bestStep : (int?)null;
+        sb.Append($"→ 결론: {(result.HasValue ? $"{result}단계 (오차 {bestDiff:F1}%)" : $"추정 불가 (최소오차 {bestDiff:F1}% > 3%)")}");
+        Log(sb.ToString());
+
+        return result;
     }
 
     /// <summary>

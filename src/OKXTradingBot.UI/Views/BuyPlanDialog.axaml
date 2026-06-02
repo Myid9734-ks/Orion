@@ -34,10 +34,18 @@
           <TextBlock Text="회차별 진입 금액"
                      FontSize="11" FontWeight="Bold"
                      Foreground="#888899" Margin="0,0,0,4"/>
+          <!-- 헤더 -->
+          <Grid ColumnDefinitions="45,70,85,*" Margin="0,0,0,4">
+            <TextBlock Text="회차"  FontSize="10" Foreground="#555566"/>
+            <TextBlock Grid.Column="1" Text="투자금"  FontSize="10" Foreground="#555566"/>
+            <TextBlock Grid.Column="2" Text="수수료"  FontSize="10" Foreground="#555566"/>
+            <TextBlock Grid.Column="3" Text="순수익"  FontSize="10" Foreground="#555566" FontWeight="Bold"/>
+          </Grid>
+
           <ItemsControl x:Name="StepList">
             <ItemsControl.ItemTemplate>
               <DataTemplate>
-                <Grid ColumnDefinitions="60,*,Auto" Margin="0,2,0,2">
+                <Grid ColumnDefinitions="45,70,85,*" Margin="0,3,0,3">
                   <TextBlock Text="{Binding Label}"
                              FontSize="12" Foreground="#888899"
                              VerticalAlignment="Center"/>
@@ -47,9 +55,14 @@
                              Foreground="{Binding Color}"
                              VerticalAlignment="Center"/>
                   <TextBlock Grid.Column="2"
-                             Text="{Binding Note}"
-                             FontSize="10" Foreground="#FF9800"
+                             Text="{Binding Fee}"
+                             FontSize="11" Foreground="#FF9800"
                              VerticalAlignment="Center"/>
+                  <TextBlock Grid.Column="3"
+                             Text="{Binding NetProfit}"
+                             FontSize="11" FontWeight="Bold"
+                             Foreground="{Binding NetProfitColor}"
+                             TextWrapping="Wrap"/>
                 </Grid>
               </DataTemplate>
             </ItemsControl.ItemTemplate>

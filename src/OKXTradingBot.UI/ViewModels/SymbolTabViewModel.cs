@@ -23,7 +23,7 @@ public record BuyPlanDialogArgs(
     string MarginMode,
     int ConfiguredCount,
     int EffectiveCount,
-    List<(string Label, string Amount, bool IsOver)> Steps,
+    List<(string Label, string Amount, bool IsOver, string Profit, string ProfitKrw, string Fee, string NetProfit, bool IsProfitWarning, bool IsNetNegative)> Steps,
     decimal RequiredTotal,
     decimal Budget,
     string Warning,
@@ -100,6 +100,7 @@ public class SymbolTabViewModel : ReactiveObject
     // ── 설정 ──────────────────────────────────────────────────────────
     private string        _symbol            = "";
     private decimal       _totalBudget       = 100m;
+    private decimal?      _budgetPercent     = null; // null = 비율 미사용(직접 입력)
     private int           _leverage          = 10;
     private string        _marginMode        = "Cross";
     private int           _martinCount       = 9;
@@ -113,6 +114,7 @@ public class SymbolTabViewModel : ReactiveObject
     private decimal       _stopLossPercent   = 3.0m;
     private bool          _autoRepeat        = true;
     private decimal       _accountBalance    = 1000m;
+    private bool          _isLiveMode        = false;
     private decimal       _usdKrwRate        = 0m;    // 0 = 아직 미조회
     private decimal       _takerFeeRate      = 0.0005m; // 봇 시작 시 API로 갱신
 
@@ -154,6 +156,7 @@ public class SymbolTabViewModel : ReactiveObject
     public ReactiveCommand<Unit, Unit> StopCommand           { get; }
     public ReactiveCommand<Unit, Unit> ClosePositionCommand  { get; }
     public ReactiveCommand<Unit, Unit> FetchBalanceCommand   { get; }
+    public ReactiveCommand<Unit, Unit> ClearLogsCommand      { get; }
 
     // ── Observable collections ────────────────────────────────────────
     public ObservableCollection<string>      Logs         { get; } = new();
@@ -190,6 +193,7 @@ public class SymbolTabViewModel : ReactiveObject
         StopCommand          = ReactiveCommand.CreateFromTask(StopBotAsync,       canStop);
         ClosePositionCommand = ReactiveCommand.CreateFromTask(ClosePositionAsync,  canStop);
         FetchBalanceCommand  = ReactiveCommand.CreateFromTask(FetchBalanceAsync);
+        ClearLogsCommand     = ReactiveCommand.Create(() => Logs.Clear());
 
         StartCommand.ThrownExceptions.Subscribe(ex        => AddLog($"[오류] {ex.Message}"));
         StopCommand.ThrownExceptions.Subscribe(ex         => AddLog($"[오류] {ex.Message}"));
@@ -204,6 +208,11 @@ public class SymbolTabViewModel : ReactiveObject
 
         // USD/KRW 환율 조회
         _ = FetchExchangeRateAsync();
+
+        // 초기 모드 설정 + 실거래면 즉시 잔고 조회 (기본값 1000 표시 방지)
+        _isLiveMode = !_getGlobalConfig().IsBacktestMode;
+        if (_isLiveMode)
+            _ = FetchBalanceAsync();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -302,6 +311,33 @@ public class SymbolTabViewModel : ReactiveObject
         }
     }
 
+    /// <summary>
+    /// 잔고 대비 투자 비율(%). 값이 있으면 TotalBudget = AccountBalance × (BudgetPercent/100) 자동 계산.
+    /// null 또는 0이면 비율 미사용 — TotalBudget 직접 입력 모드.
+    /// </summary>
+    public decimal? BudgetPercent
+    {
+        get => _budgetPercent;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _budgetPercent, value);
+            this.RaisePropertyChanged(nameof(IsBudgetPercentMode));
+            this.RaisePropertyChanged(nameof(IsNotBudgetPercentMode));
+            ApplyBudgetPercent();
+            MarkUnsaved();
+        }
+    }
+
+    public bool IsBudgetPercentMode    => _budgetPercent is > 0;
+    public bool IsNotBudgetPercentMode => !IsBudgetPercentMode;
+
+    /// <summary>비율이 설정돼 있으면 현재 잔고 기준으로 TotalBudget 재계산.</summary>
+    private void ApplyBudgetPercent()
+    {
+        if (_budgetPercent is > 0 && _accountBalance > 0)
+            TotalBudget = Math.Round(_accountBalance * _budgetPercent.Value / 100, 2);
+    }
+
     public decimal? AccountBalance
     {
         get => _accountBalance;
@@ -309,6 +345,8 @@ public class SymbolTabViewModel : ReactiveObject
         {
             this.RaiseAndSetIfChanged(ref _accountBalance, value ?? 1000m);
             this.RaisePropertyChanged(nameof(AccountBalanceKrwText));
+            // 비율 모드 중이면 잔고 갱신 시 투자금 자동 재계산
+            ApplyBudgetPercent();
         }
     }
 
@@ -321,6 +359,9 @@ public class SymbolTabViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(ExchangeRateText));
             this.RaisePropertyChanged(nameof(TotalBudgetKrwText));
             this.RaisePropertyChanged(nameof(AccountBalanceKrwText));
+            // 환율 조회 완료 시 기존 레코드 원화 갱신
+            foreach (var r in TradeHistory)
+                r.UsdKrwRate = value;
         }
     }
 
@@ -668,13 +709,44 @@ public class SymbolTabViewModel : ReactiveObject
             MartinAmountWeights = _martinAmountWeights,
             AmountMode          = _amountMode
         };
-        var steps = new List<(string Label, string Amount, bool IsOver)>();
+        // 회차별 누적 예상 수익 / 누적 수수료 계산 (TradingCore와 동일한 계산식)
+        // 목표수익%는 레버리지 포함 기준 → 실제 가격이동 = targetPct / leverage
+        // 수익(gross) = 누적투자금(마진) × (targetPct / leverage)
+        // 수수료 = 누적투자금(마진) × (Maker + Taker)
+        var feeRate   = _takerFeeRate + 0.0002m; // Maker 0.02% + Taker 0.05%
+        var leverage  = (decimal)(_leverage > 0 ? _leverage : 1);
+
+        var steps = new List<(string Label, string Amount, bool IsOver, string Profit, string ProfitKrw, string Fee, string NetProfit, bool IsProfitWarning, bool IsNetNegative)>();
+        decimal cumAmount = 0;
         for (int i = 0; i < _martinCount; i++)
         {
-            if (i < effectiveAmounts.Count)
-                steps.Add(($"{i + 1}회차", $"{effectiveAmounts[i]:F2} USDT", false));
-            else
-                steps.Add(($"{i + 1}회차", $"{origConfig.GetAmountForStep(i + 1):F2} USDT", true));
+            decimal stepAmt = i < effectiveAmounts.Count
+                ? effectiveAmounts[i]
+                : origConfig.GetAmountForStep(i + 1);
+            bool isOver = i >= effectiveAmounts.Count;
+
+            cumAmount += stepAmt;
+            var profit = cumAmount * (_targetProfit / 100m / leverage);  // 마진 × 가격이동%
+            var fee    = cumAmount * feeRate;                             // 마진 × 왕복수수료율
+            var isProfitWarning = profit <= fee;
+
+            var netAmt    = profit - fee;
+            var profitKrw = _usdKrwRate > 0 ? $"≈ ₩{profit * _usdKrwRate:N0}" : "";
+            var netKrw    = _usdKrwRate > 0
+                ? $"{netAmt:+0.0000;-0.0000}\n≈ ₩{netAmt * _usdKrwRate:N0}"
+                : $"{netAmt:+0.0000;-0.0000}";
+
+            steps.Add((
+                $"{i + 1}회차",
+                $"{stepAmt:F2} USDT",
+                isOver,
+                $"+{profit:F4} USDT",
+                profitKrw,
+                $"-{fee:F4} USDT",
+                netKrw,
+                isProfitWarning,
+                netAmt < 0
+            ));
         }
 
         return new BuyPlanDialogArgs(
@@ -756,6 +828,28 @@ public class SymbolTabViewModel : ReactiveObject
     }
 
     public bool IsNotRunning => !_isRunning;
+
+    /// <summary>실거래 모드 여부 — AXAML 바인딩용 (잔고 필드 잠금 등). MainWindow 모드 전환 시 갱신.</summary>
+    public bool IsLiveMode
+    {
+        get => _isLiveMode;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _isLiveMode, value);
+            this.RaisePropertyChanged(nameof(IsNotLiveMode));
+        }
+    }
+
+    /// <summary>모의거래 모드 여부 — AllowSpin 바인딩용 (!IsLiveMode 대신 사용, 컴파일 바인딩 안전).</summary>
+    public bool IsNotLiveMode => !_isLiveMode;
+
+    /// <summary>MainWindowViewModel 이 모드 전환 시 호출 — IsLiveMode 갱신 + 실거래 전환이면 잔고 재조회.</summary>
+    public void NotifyModeChanged(bool isLive)
+    {
+        IsLiveMode = isLive;
+        if (isLive)
+            _ = FetchBalanceAsync();
+    }
 
     public IBrush StatusBrush => IsRunning ? Brushes.LightGreen : Brushes.Gray;
     public string StatusText  => IsRunning ? "봇 실행 중" : "대기 중";
@@ -961,10 +1055,16 @@ public class SymbolTabViewModel : ReactiveObject
         // ── 알림 설정 구성 (필드 재사용 — 설정 변경 시 in-place 갱신됨) ──
         ApplyNotifyConfig(global);
 
+        // ── 로그 파일 서비스 (모든 컴포넌트 로그를 이 세션 파일로 라우팅) ──
+        // rest/ws/executor 생성보다 먼저 만들어야 각 컴포넌트에 파일 로거를 주입할 수 있다.
+        _logService = new LogFileService(_symbol, _martinCount);
+        _logService.WriteSeparator(global.IsBacktestMode ? "가상매매 시작" : "실거래 시작");
+        Action<string> logSink = msg => _logService?.Write(msg);
+
         // ── 데이터 프로바이더 (실시간 — 가상매매/실거래 공통) ──
         var rest      = new OkxRestClient(config.ApiKey, config.ApiSecret, config.Passphrase,
-                            NullLogger<OkxRestClient>.Instance);
-        var ws        = new OkxWebSocketClient(NullLogger<OkxWebSocketClient>.Instance);
+                            new FileLogger<OkxRestClient>(logSink));
+        var ws        = new OkxWebSocketClient(new FileLogger<OkxWebSocketClient>(logSink));
         _dataProvider = new OkxDataProvider(ws, rest, config.Symbol);
 
         // ── 주문 실행기: 가상매매 vs 실거래 (이것만 교체하면 끝) ──
@@ -976,12 +1076,12 @@ public class SymbolTabViewModel : ReactiveObject
         }
         else
         {
-            // 실거래: Private WS 포함 OkxOrderExecutor
+            // 실거래: Private WS 포함 OkxOrderExecutor — 체결 감지/주문 로그를 파일에 남긴다.
             var privWs = new OkxPrivateWebSocketClient(
                 config.ApiKey, config.ApiSecret, config.Passphrase,
-                NullLogger<OkxPrivateWebSocketClient>.Instance);
+                new FileLogger<OkxPrivateWebSocketClient>(logSink));
             var realExecutor = new OkxOrderExecutor(rest, privWs,
-                NullLogger<OkxOrderExecutor>.Instance);
+                new FileLogger<OkxOrderExecutor>(logSink));
             realExecutor.SetSymbolForPrivateStream(config.Symbol);
             executor = realExecutor;
             AddLog($"[실거래] OKX 실주문 + Pre-orders 모드 (서버 트리거)");
@@ -997,7 +1097,7 @@ public class SymbolTabViewModel : ReactiveObject
             if (!string.IsNullOrEmpty(global.GptApiKey))
             {
                 gptAnalyzer = new GptAnalyzer(global.GptApiKey, global.GptModel,
-                                  NullLogger<GptAnalyzer>.Instance);
+                                  new FileLogger<GptAnalyzer>(logSink));
                 AddLog($"[GPT] 활성화 — 모델: {global.GptModel} | 신뢰도 임계값: {global.GptConfidenceThreshold}%");
             }
             else
@@ -1010,21 +1110,27 @@ public class SymbolTabViewModel : ReactiveObject
             AddLog("[GPT 미사용] 가격 방향 감지 모드 — 봇 시작가 기준 다음 캔들 방향으로 진입");
         }
 
-        // ── 로그 파일 서비스 ──
-        _logService = new LogFileService(_symbol, _martinCount);
-        _logService.WriteSeparator(global.IsBacktestMode ? "가상매매 시작" : "실거래 시작");
-
         // ── TradingCore 생성 ──
+        // TradingCore 는 Log() 가 logSink 로 직접 파일 기록하므로 ILogger 는 NullLogger 유지
+        // (FileLogger 를 주면 Log() 의 _logger.LogInformation 까지 중복 기록됨)
         _core = new TradingCore(
             _dataProvider, executor, config,
             NullLogger<TradingCore>.Instance,
             notifier, _notifyConfig,
             gptAnalyzer,
-            msg => _logService?.Write(msg));  // 로그 파일 sink
+            logSink,
+            // DB 기록 건수 콜백 — 재시작 시 실제 누락 건수 계산용
+            (symbol, since) => _tradeRepo.LoadByPeriod(since, DateTime.UtcNow, symbol).Count);
 
         _core.OnPositionUpdated += HandlePositionUpdated;
         _core.OnLogMessage      += HandleLogMessage;
         _core.OnTradeClosed     += HandleTradeClosed;
+        _core.OnBotStopped      += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            IsRunning = false;
+            StopPricePolling();
+            _logService?.WriteSeparator("매매 종료");
+        });
 
         // 수수료율 조회 (UI 예상수수료 표시 갱신)
         var (taker, maker) = await executor.GetFeeRatesAsync(_symbol);
@@ -1058,7 +1164,11 @@ public class SymbolTabViewModel : ReactiveObject
     private async Task FetchBalanceAsync()
     {
         var global = _getGlobalConfig();
-        if (string.IsNullOrEmpty(global.ApiKey)) return;
+        if (string.IsNullOrEmpty(global.ApiKey))
+        {
+            AddLog("⚠ 잔고 조회 실패 — 설정 > API Key를 먼저 입력·저장하세요");
+            return;
+        }
 
         try
         {
@@ -1066,11 +1176,11 @@ public class SymbolTabViewModel : ReactiveObject
                            NullLogger<OkxRestClient>.Instance);
             var balance = await rest.GetBalanceAsync();
             AccountBalance = balance;
-            AddLog($"[잔고 조회] {balance:N2} USDT");
+            AddLog($"[잔고 조회] {balance:N4} USDT  ≈ {AccountBalanceKrwText}");
         }
         catch (Exception ex)
         {
-            AddLog($"[잔고 조회 실패] {ex.Message}");
+            AddLog($"⚠ 잔고 조회 실패 — {ex.Message}");
         }
     }
 
@@ -1078,11 +1188,9 @@ public class SymbolTabViewModel : ReactiveObject
     {
         if (ConfirmStop != null && !await ConfirmStop()) return;
 
-        StopPricePolling();
+        // 현재 사이클 완료 후 자연 종료 — IsRunning은 HandleTradeClosed에서 처리
         if (_core != null) await _core.StopAsync();
-        _cts?.Cancel();
-        IsRunning = false;
-        _logService?.WriteSeparator("봇 중지");
+        AddLog("⏹ 중지 예약 — 현재 사이클(익절/손절) 완료 후 자동 종료");
     }
 
     private async Task ClosePositionAsync()
@@ -1237,8 +1345,15 @@ public class SymbolTabViewModel : ReactiveObject
             }
             else if (pos.Status == PositionStatus.None)
             {
-                // 자동반복 대기 상태
-                PositionStatusText = "다음 사이클 대기 중";
+                // 강제 종료 또는 자동반복 대기 — UI 초기화
+                DirectionText    = "-";
+                DirectionBrush   = Brushes.Gray;
+                MartinStep       = 0;
+                TotalAmount      = 0;
+                AvgEntryPrice    = 0;
+                NextMartinPrice  = 0;
+                UnrealizedPnlPct = 0;
+                PositionStatusText = "대기 중";
             }
         });
     }
@@ -1267,6 +1382,9 @@ public class SymbolTabViewModel : ReactiveObject
                 MartinMax     = e.MartinMax,
                 PnlAmount     = e.PnlAmount,
                 PnlPercent    = e.PnlPercent,
+                Fee           = e.Fee,
+                UsdKrwRate    = _usdKrwRate,
+                OpenedAt      = e.OpenedAt,
                 ClosedAt      = e.ClosedAt,
                 AmountMode    = _amountMode.ToString()
             };
@@ -1279,7 +1397,8 @@ public class SymbolTabViewModel : ReactiveObject
     }
 
     private void HandleLogMessage(object? sender, string message)
-        => Avalonia.Threading.Dispatcher.UIThread.Post(() => AddLog(message));
+        // TradingCore 메시지는 이미 logSink 로 파일에 기록됨 → UI 표시만 (파일 중복 방지)
+        => Avalonia.Threading.Dispatcher.UIThread.Post(() => InsertLogUi(message));
 
     /// <summary>앱 시작 시 DB에서 이전 거래 기록 로드 (해당 심볼만)</summary>
     private void LoadTradeHistoryFromDb()
@@ -1309,6 +1428,9 @@ public class SymbolTabViewModel : ReactiveObject
                         MartinMax     = e.MartinMax,
                         PnlAmount     = e.PnlAmount,
                         PnlPercent    = e.PnlPercent,
+                        Fee           = e.Fee,
+                        UsdKrwRate    = _usdKrwRate,
+                        OpenedAt      = e.OpenedAt,
                         ClosedAt      = e.ClosedAt
                     };
                     TradeHistory.Add(record);
@@ -1331,7 +1453,16 @@ public class SymbolTabViewModel : ReactiveObject
         }
     }
 
+    /// <summary>VM 직접 로그 — UI 표시 + 세션 파일 저장 (실거래 디버깅용).</summary>
     public void AddLog(string message)
+    {
+        InsertLogUi(message);
+        // 세션 진행 중이면 파일에도 기록 ([실거래]/[수수료]/[잔고]/예산경고 등 보존)
+        _logService?.Write($"[{DateTime.Now:HH:mm:ss}] {message}");
+    }
+
+    /// <summary>UI 로그 컬렉션에만 삽입 (파일 기록 없음).</summary>
+    private void InsertLogUi(string message)
     {
         Logs.Insert(0, message);
         while (Logs.Count > 500) Logs.RemoveAt(Logs.Count - 1);
@@ -1374,6 +1505,8 @@ public class SymbolTabViewModel : ReactiveObject
         AmountMode         = _amountMode.ToString(),
         StopLossEnabled    = _stopLossEnabled,
         StopLossPercent    = _stopLossPercent,
+        BudgetPercent      = _budgetPercent,
+        AutoRepeat         = _autoRepeat,
     };
 
     public void ApplySettings(SymbolTabSettings s)
@@ -1392,6 +1525,8 @@ public class SymbolTabViewModel : ReactiveObject
         _amountMode        = Enum.TryParse<MartinAmountMode>(s.AmountMode, out var am) ? am : MartinAmountMode.Equal;
         _stopLossEnabled   = s.StopLossEnabled;
         _stopLossPercent   = s.StopLossPercent;
+        _budgetPercent     = s.BudgetPercent;
+        _autoRepeat        = s.AutoRepeat;
         _isLoading = false;
 
         // UI 갱신
@@ -1415,6 +1550,10 @@ public class SymbolTabViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(MartinAmountWeights));
         this.RaisePropertyChanged(nameof(StopLossEnabled));
         this.RaisePropertyChanged(nameof(StopLossPercent));
+        this.RaisePropertyChanged(nameof(BudgetPercent));
+        this.RaisePropertyChanged(nameof(IsBudgetPercentMode));
+        this.RaisePropertyChanged(nameof(IsNotBudgetPercentMode));
+        this.RaisePropertyChanged(nameof(AutoRepeat));
         this.RaisePropertyChanged(nameof(SingleOrderAmountText));
         this.RaisePropertyChanged(nameof(SingleOrderAmountValueText));
         this.RaisePropertyChanged(nameof(RequiredSeedText));

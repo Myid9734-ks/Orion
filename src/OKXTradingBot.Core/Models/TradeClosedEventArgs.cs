@@ -15,8 +15,10 @@ public class TradeClosedEventArgs
     public int            MartinMax     { get; set; }
     public decimal        PnlPercent    { get; set; }
     public decimal        PnlAmount     { get; set; }
+    public decimal        Fee           { get; set; }
     public bool           IsStopLoss    { get; set; }
     public int            Leverage      { get; set; }
     public DateTime       OpenedAt      { get; set; }
     public DateTime       ClosedAt      { get; set; }
+    public TimeSpan       Duration      => ClosedAt - OpenedAt;
 }

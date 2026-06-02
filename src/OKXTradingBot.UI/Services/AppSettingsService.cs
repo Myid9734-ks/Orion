@@ -20,6 +20,8 @@ public class SymbolTabSettings
     public string        AmountMode         { get; set; } = "Equal";
     public bool          StopLossEnabled    { get; set; } = false;
     public decimal       StopLossPercent    { get; set; } = 3.0m;
+    public decimal?      BudgetPercent      { get; set; } = null;
+    public bool          AutoRepeat         { get; set; } = true;
 }
 
 // ── 전체 앱 설정 (복호화된 형태) ─────────────────────────────────────

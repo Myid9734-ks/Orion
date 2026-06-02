@@ -163,7 +163,7 @@
           </Grid>
 
           <!-- ── 요약 카드 ── -->
-          <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*" Margin="0,0,0,12">
+          <Grid Grid.Row="1" ColumnDefinitions="*,*,*,*,*" Margin="0,0,0,12">
             <Border Grid.Column="0"
                     Background="{DynamicResource CardBackground}"
                     BorderBrush="{DynamicResource CardBorder}"
@@ -174,6 +174,9 @@
                            Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6"/>
                 <TextBlock Text="{Binding FilteredTotalPnlText}" FontSize="18" FontWeight="Bold"
                            Foreground="{Binding FilteredTotalPnlBrush}"/>
+                <TextBlock Text="{Binding FilteredTotalPnlKrwText}" FontSize="11"
+                           Foreground="{Binding FilteredTotalPnlBrush}" Opacity="0.8"
+                           IsVisible="{Binding FilteredTotalPnlKrwText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
               </StackPanel>
             </Border>
             <Border Grid.Column="1"
@@ -194,10 +197,10 @@
                     BorderThickness="1" CornerRadius="8" Padding="16,12"
                     Margin="0,0,8,0">
               <StackPanel>
-                <TextBlock Text="승률" FontSize="11"
+                <TextBlock Text="평균 소요시간" FontSize="11"
                            Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6"/>
-                <TextBlock Text="{Binding FilteredWinRateText}" FontSize="18" FontWeight="Bold"
-                           Foreground="{DynamicResource AccentColor}"/>
+                <TextBlock Text="{Binding FilteredAvgDurationText}" FontSize="18" FontWeight="Bold"
+                           Foreground="{DynamicResource TextPrimary}"/>
               </StackPanel>
             </Border>
             <Border Grid.Column="3"
@@ -209,6 +212,23 @@
                            Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6"/>
                 <TextBlock Text="{Binding FilteredAvgPnlText}" FontSize="18" FontWeight="Bold"
                            Foreground="{Binding FilteredTotalPnlBrush}"/>
+                <TextBlock Text="{Binding FilteredAvgPnlKrwText}" FontSize="11"
+                           Foreground="{Binding FilteredTotalPnlBrush}" Opacity="0.8"
+                           IsVisible="{Binding FilteredAvgPnlKrwText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+              </StackPanel>
+            </Border>
+            <Border Grid.Column="4"
+                    Background="{DynamicResource CardBackground}"
+                    BorderBrush="{DynamicResource CardBorder}"
+                    BorderThickness="1" CornerRadius="8" Padding="16,12">
+              <StackPanel>
+                <TextBlock Text="총 수수료" FontSize="11"
+                           Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6"/>
+                <TextBlock Text="{Binding FilteredTotalFeeText}" FontSize="18" FontWeight="Bold"
+                           Foreground="Tomato"/>
+                <TextBlock Text="{Binding FilteredTotalFeeKrwText}" FontSize="11"
+                           Foreground="Tomato" Opacity="0.8"
+                           IsVisible="{Binding FilteredTotalFeeKrwText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
               </StackPanel>
             </Border>
           </Grid>
@@ -222,7 +242,7 @@
               <Border Grid.Row="0"
                       Background="{DynamicResource HeaderBackground}"
                       CornerRadius="8,8,0,0" Padding="14,8">
-                <Grid ColumnDefinitions="36,120,64,*,80,56,110,90,100">
+                <Grid ColumnDefinitions="36,120,64,*,80,56,110,90,90,100">
                   <TextBlock Grid.Column="0" Text="#" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
                   <TextBlock Grid.Column="1" Text="심볼" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
                   <TextBlock Grid.Column="2" Text="방향" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
@@ -230,8 +250,9 @@
                   <TextBlock Grid.Column="4" Text="마틴" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
                   <TextBlock Grid.Column="5" Text="배분" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
                   <TextBlock Grid.Column="6" Text="손익 (USDT)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="7" Text="손익 (%)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
-                  <TextBlock Grid.Column="8" Text="시간" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="7" Text="손익 (원화)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="8" Text="손익 (%)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
+                  <TextBlock Grid.Column="9" Text="시간" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="Bold"/>
                 </Grid>
               </Border>
               <ScrollViewer Grid.Row="1">
@@ -241,7 +262,7 @@
                       <Border Padding="14,7"
                               BorderBrush="{DynamicResource SeparatorColor}"
                               BorderThickness="0,0,0,1">
-                        <Grid ColumnDefinitions="36,120,64,*,80,56,110,90,100">
+                        <Grid ColumnDefinitions="36,120,64,*,80,56,110,90,90,100">
                           <TextBlock Grid.Column="0" Text="{Binding Number}" Foreground="{DynamicResource TextMuted}" FontSize="12"/>
                           <TextBlock Grid.Column="1" Text="{Binding Symbol}" Foreground="{DynamicResource TextSecondary}" FontSize="11"/>
                           <TextBlock Grid.Column="2" Text="{Binding Direction}" Foreground="{Binding DirectionBrush}" FontSize="12" FontWeight="Bold"/>
@@ -249,8 +270,9 @@
                           <TextBlock Grid.Column="4" Text="{Binding MartinText}" Foreground="{DynamicResource TextSecondary}" FontSize="12"/>
                           <TextBlock Grid.Column="5" Text="{Binding AmountModeText}" Foreground="{DynamicResource TextSecondary}" FontSize="12"/>
                           <TextBlock Grid.Column="6" Text="{Binding PnlAmountText}" Foreground="{Binding PnlBrush}" FontSize="12" FontWeight="Bold"/>
-                          <TextBlock Grid.Column="7" Text="{Binding PnlPercentText}" Foreground="{Binding PnlBrush}" FontSize="12"/>
-                          <TextBlock Grid.Column="8" Text="{Binding TimeText}" Foreground="{DynamicResource TextMuted}" FontSize="12"/>
+                          <TextBlock Grid.Column="7" Text="{Binding PnlAmountKrwText}" Foreground="{Binding PnlBrush}" FontSize="12"/>
+                          <TextBlock Grid.Column="8" Text="{Binding PnlPercentText}" Foreground="{Binding PnlBrush}" FontSize="12"/>
+                          <TextBlock Grid.Column="9" Text="{Binding TimeText}" Foreground="{DynamicResource TextMuted}" FontSize="12"/>
                         </Grid>
                       </Border>
                     </DataTemplate>
@@ -402,7 +424,7 @@
                       <TextBlock Text="분석 간격 (분)" FontSize="10"
                                  Foreground="{DynamicResource TextSecondary}"
                                  ToolTip.Tip="GPT 분석을 몇 분마다 실행할지 설정&#10;기본 5분 — API 비용 절감 + 충분한 시장 반영"/>
-                      <NumericUpDown Value="{Binding GptAnalysisInterval}"
+                      <local:NoWheelNumericUpDown Value="{Binding GptAnalysisInterval}"
                                      Minimum="1" Maximum="60" Increment="1"
                                      FormatString="F0" FontSize="12"
                                      ToolTip.Tip="GPT 분석을 몇 분마다 실행할지 설정&#10;기본 5분 — API 비용 절감 + 충분한 시장 반영"/>
@@ -414,7 +436,7 @@
                       <TextBlock Text="분석 봉 개수" FontSize="10"
                                  Foreground="{DynamicResource TextSecondary}"
                                  ToolTip.Tip="GPT에게 전달할 최근 캔들 개수&#10;많을수록 더 많은 시장 흐름을 분석하지만 API 비용 증가"/>
-                      <NumericUpDown Value="{Binding GptCandleCount}"
+                      <local:NoWheelNumericUpDown Value="{Binding GptCandleCount}"
                                      Minimum="5" Maximum="100" Increment="5"
                                      FormatString="F0" FontSize="12"
                                      ToolTip.Tip="GPT에게 전달할 최근 캔들 개수&#10;많을수록 더 많은 시장 흐름을 분석하지만 API 비용 증가"/>
@@ -426,7 +448,7 @@
                       <TextBlock Text="신뢰도 임계값 (%)" FontSize="10"
                                  Foreground="{DynamicResource TextSecondary}"
                                  ToolTip.Tip="GPT 신뢰도가 이 값 이상일 때만 진입&#10;미만이면 스킵 후 분석 간격 후 재시도"/>
-                      <NumericUpDown Value="{Binding GptConfidenceThreshold}"
+                      <local:NoWheelNumericUpDown Value="{Binding GptConfidenceThreshold}"
                                      Minimum="50" Maximum="100" Increment="5"
                                      FormatString="F0" FontSize="12"
                                      ToolTip.Tip="GPT 신뢰도가 이 값 이상일 때만 진입&#10;미만이면 스킵 후 분석 간격 후 재시도"/>

@@ -30,6 +30,8 @@ public class OkxPrivateWebSocketClient : IAsyncDisposable
     private bool                   _loggedIn; // 디버그/상태 추적용
     private string                 _instId = "";
     private string                 _instType = "SWAP";
+    // 중복 이벤트 차단용 — WS 재연결/분할체결 등으로 같은 ordId가 2번 들어오는 경우 방지
+    private readonly HashSet<string> _processedOrdIds = new();
 
     /// <summary>algo 주문 발동/체결 이벤트</summary>
     public event EventHandler<AlgoOrderFillEvent>? OnAlgoOrderFilled;
@@ -295,8 +297,15 @@ public class OkxPrivateWebSocketClient : IAsyncDisposable
                 label, avgPx, accFillSz, algoId);
         }
 
-        // filled 상태일 때만 이벤트 발사
-        if (state != "filled" && state != "partially_filled") return;
+        // filled 상태일 때만 이벤트 발사 (partially_filled 제외 — 분할체결 이중처리 방지)
+        if (state != "filled") return;
+
+        // 같은 ordId 중복 처리 방지
+        if (!string.IsNullOrEmpty(ordId) && !_processedOrdIds.Add(ordId))
+        {
+            _logger.LogDebug("[PrivWS] 중복 ordId 무시: {oid}", ordId);
+            return;
+        }
 
         if (!decimal.TryParse(avgPx,      out var pxDec))  pxDec  = 0;
         if (!decimal.TryParse(accFillSz,  out var szDec))  szDec  = 0;
@@ -333,7 +342,8 @@ public class OkxPrivateWebSocketClient : IAsyncDisposable
         _ws       = new ClientWebSocket();
         _ws.Options.RemoteCertificateValidationCallback = (_, _, _, _) => true;
         _loggedIn = false;
-        _isReconnecting = true;  // subscribe 확인 응답에서 OnReconnected 발사 트리거
+        _isReconnecting = true;
+        _processedOrdIds.Clear(); // 재연결 시 중복 방지 세트 초기화  // subscribe 확인 응답에서 OnReconnected 발사 트리거
 
         await _ws.ConnectAsync(new Uri(WsPrivate), ct);
         _logger.LogInformation("[PrivWS] 재연결 완료 — 재로그인 (구독 복구 후 OnReconnected 발사 예정)");

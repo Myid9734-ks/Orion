@@ -113,8 +113,8 @@ public class PriceChartControl : Control
         var labelColor    = isDark ? Color.Parse("#8080B0")  : Color.Parse("#4C5080");
         var axisColor     = isDark ? Color.Parse("#3A3A5C")  : Color.Parse("#BEC4DC");
         var curPriceColor = isDark ? Color.Parse("#FFC107")  : Color.Parse("#BF4000");
-        var bullColor     = isDark ? Color.Parse("#26A69A")  : Color.Parse("#00897B");
-        var bearColor     = isDark ? Color.Parse("#EF5350")  : Color.Parse("#E53935");
+        var bullColor     = isDark ? Color.Parse("#EF5350")  : Color.Parse("#E53935");  // 양봉: 빨강
+        var bearColor     = isDark ? Color.Parse("#2196F3")  : Color.Parse("#1565C0");  // 음봉: 파랑
 
         if (allCandles == null || allCandles.Count < 2)
         {
