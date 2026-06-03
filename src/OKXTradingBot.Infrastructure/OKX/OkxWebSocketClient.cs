@@ -102,9 +102,13 @@ public class OkxWebSocketClient : IAsyncDisposable
             catch (OperationCanceledException) { break; }
             catch (WebSocketException ex)
             {
-                _logger.LogWarning("WebSocket 오류: {msg} — 5초 후 재연결", ex.Message);
-                await Task.Delay(5000, ct);
-                await ReconnectAsync(ct);
+                _logger.LogWarning("WebSocket 오류: {msg}", ex.Message);
+                await ReconnectWithRetryAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "WebSocket 수신 루프 예외");
+                await ReconnectWithRetryAsync(ct);
             }
         }
     }
@@ -155,6 +159,29 @@ public class OkxWebSocketClient : IAsyncDisposable
         catch (Exception ex)
         {
             _logger.LogWarning("메시지 파싱 오류: {msg}", ex.Message);
+        }
+    }
+
+    private async Task ReconnectWithRetryAsync(CancellationToken ct)
+    {
+        int delayMs = 5000;
+        int attempt = 0;
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                attempt++;
+                _logger.LogWarning("WebSocket 재연결 시도 #{n} ({delay}s 후)...", attempt, delayMs / 1000);
+                await Task.Delay(delayMs, ct);
+                await ReconnectAsync(ct);
+                return;
+            }
+            catch (OperationCanceledException) { return; }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("WebSocket 재연결 #{n} 실패: {msg} — 재시도", attempt, ex.Message);
+                delayMs = Math.Min(delayMs * 2, 60_000);
+            }
         }
     }
 

@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 
 namespace OKXTradingBot.UI.Views;
 
@@ -7,7 +8,13 @@ public class NoWheelNumericUpDown : NumericUpDown
 {
     protected override Type StyleKeyOverride => typeof(NumericUpDown);
 
-    protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
+    public NoWheelNumericUpDown()
+    {
+        AddHandler(PointerWheelChangedEvent, OnWheelBlocked,
+            RoutingStrategies.Tunnel | RoutingStrategies.Bubble);
+    }
+
+    private static void OnWheelBlocked(object? sender, PointerWheelEventArgs e)
     {
         e.Handled = true;
     }
