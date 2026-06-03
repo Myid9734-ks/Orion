@@ -29,7 +29,7 @@
     필수: ~/.okxtradingbot/keys/private.pem  (개발자 PC에만 존재)
     출력: <OutDir>/license.dat  (앱과 함께 배포)
   -->
-  <Target Name="GenerateLicense" AfterTargets="Build" Condition="'$(CpuId)' != ''">
+  <Target Name="GenerateLicense" AfterTargets="Build,Publish" Condition="'$(CpuId)' != ''">
     <PropertyGroup>
       <!-- 만료일 미지정 시 오늘부터 1년 -->
       <_LicenseExpire Condition="'$(LicenseExpire)' == ''">$([System.DateTime]::Now.AddYears(1).ToString("yyyy-MM-dd"))</_LicenseExpire>
