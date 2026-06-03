@@ -5,26 +5,43 @@ namespace OKXTradingBot.UI.Services;
 
 /// <summary>
 /// 앱 시작 시 라이센스를 검증한다.
-/// license.dat 위치: %UserProfile%/.okxtradingbot/license.dat (Windows, macOS, Linux 공통)
+///
+/// license.dat 탐색 순서:
+///   1. 앱 실행 폴더 (빌드 시 자동 생성된 번들 라이센스)
+///   2. %UserProfile%/.okxtradingbot/license.dat (수동 설치)
+///
 /// 공개키: 어셈블리 내장 리소스 (OKXTradingBot.UI.Assets.public.pem)
 /// </summary>
 public static class LicenseGuard
 {
-    public static string LicensePath => Path.Combine(
+    private static readonly string _userLicensePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         ".okxtradingbot", "license.dat");
+
+    /// <summary>실제로 로드된 license.dat 경로 (앱 폴더 우선).</summary>
+    public static string LicensePath
+    {
+        get
+        {
+            var appDir = AppContext.BaseDirectory;
+            var appLicense = Path.Combine(appDir, "license.dat");
+            if (File.Exists(appLicense)) return appLicense;
+            return _userLicensePath;
+        }
+    }
 
     public static LicenseValidationResult Check()
     {
         var machineId = MachineIdProvider.Get();
 
-        if (!File.Exists(LicensePath))
-            return new LicenseValidationResult { Status = LicenseStatus.FileNotFound, ErrorDetail = LicensePath };
+        var path = LicensePath;
+        if (!File.Exists(path))
+            return new LicenseValidationResult { Status = LicenseStatus.FileNotFound, ErrorDetail = path };
 
         string licenseText;
         try
         {
-            licenseText = File.ReadAllText(LicensePath);
+            licenseText = File.ReadAllText(path);
         }
         catch (Exception ex)
         {
@@ -87,8 +104,8 @@ public static class LicenseGuard
 
     private static void SaveLicenseText(string text)
     {
-        var dir = Path.GetDirectoryName(LicensePath)!;
+        var dir = Path.GetDirectoryName(_userLicensePath)!;
         Directory.CreateDirectory(dir);
-        File.WriteAllText(LicensePath, text);
+        File.WriteAllText(_userLicensePath, text);
     }
 }
