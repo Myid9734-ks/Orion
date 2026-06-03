@@ -37,19 +37,8 @@ public partial class App : Application
                 desktop.MainWindow = dialog;
                 dialog.Closed += (_, _) =>
                 {
-                    if (dialog.LicenseRegistered)
-                    {
-                        WriteAppLog("라이센스 등록 완료, 메인 윈도우로 전환");
-                        var main = new MainWindow();
-                        desktop.MainWindow = main;
-                        main.Show();
-                        desktop.ShutdownRequested += (_, _) => WriteAppLog("앱 종료");
-                    }
-                    else
-                    {
-                        WriteAppLog("라이센스 미등록, 앱 종료");
-                        desktop.Shutdown(1);
-                    }
+                    WriteAppLog("라이센스 미등록, 앱 종료");
+                    desktop.Shutdown(1);
                 };
             }
             else
