@@ -396,6 +396,38 @@ public class MainWindowViewModel : ReactiveObject
         // 앱 시작 시 GPT API Key가 저장돼 있으면 실제 모델 목록 자동 조회
         if (!string.IsNullOrWhiteSpace(_gptApiKey))
             _ = RefreshGptModelsAsync();
+
+        _ = StartLicenseExpiryWatchdogAsync();
+    }
+
+    // ── 라이센스 만료 감시 (매일 00:01) ──────────────────────────────
+    private async Task StartLicenseExpiryWatchdogAsync()
+    {
+        while (true)
+        {
+            // 다음 00:01 까지 대기
+            var now  = DateTime.Now;
+            var next = now.Date.AddDays(1).AddMinutes(1); // 내일 00:01
+            var delay = next - now;
+            await Task.Delay(delay);
+
+            var result = Services.LicenseGuard.Check();
+            if (result.IsValid) continue;
+
+            // 만료 — 모든 실행 중인 탭에 신규 진입 차단
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(async () =>
+            {
+                foreach (var tab in SymbolTabs.Where(t => t.IsRunning))
+                    await tab.BlockNewEntryAsync();
+
+                // 상태 표시 업데이트
+                this.RaisePropertyChanged(nameof(LicenseExpireText));
+                this.RaisePropertyChanged(nameof(LicenseExpireBrush));
+            });
+
+            // 재실행 방지 — 이후 루프 중단
+            return;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════

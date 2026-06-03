@@ -231,6 +231,16 @@ public class TradingCore
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// 라이센스 만료 시 호출 — 신규 진입 차단, 현재 포지션은 익절/손절까지 유지.
+    /// </summary>
+    public Task BlockNewEntryAsync()
+    {
+        _autoRepeat = false;
+        Log("🔒 라이센스 만료 — 신규 진입 차단. 현재 포지션 익절/손절 후 자동 종료.");
+        return Task.CompletedTask;
+    }
+
     // ═════════════════════════════════════════════
     // 지정가 청산 watchdog
     //   - reduceOnly limit 미체결 5초마다 현재가로 정정

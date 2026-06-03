@@ -1193,6 +1193,13 @@ public class SymbolTabViewModel : ReactiveObject
         AddLog("⏹ 중지 예약 — 현재 사이클(익절/손절) 완료 후 자동 종료");
     }
 
+    /// <summary>라이센스 만료 시 외부에서 호출 — 신규 진입 차단, 현재 포지션 유지.</summary>
+    public async Task BlockNewEntryAsync()
+    {
+        if (_core != null) await _core.BlockNewEntryAsync();
+        AddLog("🔒 라이센스 만료 — 신규 진입 차단. 현재 포지션 정리 후 자동 종료.");
+    }
+
     private async Task ClosePositionAsync()
     {
         if (ConfirmForceClose != null && !await ConfirmForceClose()) return;
