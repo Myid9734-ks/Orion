@@ -5,8 +5,8 @@ namespace OKXTradingBot.Core.Licensing;
 
 /// <summary>
 /// 현재 PC의 고유 식별자(MachineId)를 읽는다.
-///   Windows : wmic cpu get ProcessorId  → BFEBFBFF000A0655 형태
-///   macOS   : ioreg IOPlatformUUID       → XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX 형태
+///   Windows : wmic → PowerShell 순으로 CPU ProcessorId 읽기
+///   macOS   : ioreg IOPlatformUUID
 ///   Linux   : /etc/machine-id
 /// 빌드 시 -p:CpuId=<이 값> 으로 라이센스를 생성한다.
 /// </summary>
@@ -29,45 +29,44 @@ public static class MachineIdProvider
 
     private static string? GetWindowsCpuId()
     {
-        var psi = new ProcessStartInfo("wmic", "cpu get ProcessorId /value")
+        // 1차: wmic (Windows 10 이하)
+        var result = RunProcess("wmic", "cpu get ProcessorId /value", 3000);
+        if (result != null)
         {
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var p = Process.Start(psi);
-        if (p == null) return null;
-        var output = p.StandardOutput.ReadToEnd();
-        p.WaitForExit(3000);
-
-        foreach (var line in output.Split('\n', '\r'))
-        {
-            if (line.StartsWith("ProcessorId=", StringComparison.OrdinalIgnoreCase))
-                return line.Substring("ProcessorId=".Length).Trim();
+            foreach (var line in result.Split('\n', '\r'))
+            {
+                if (line.StartsWith("ProcessorId=", StringComparison.OrdinalIgnoreCase))
+                {
+                    var id = line.Substring("ProcessorId=".Length).Trim();
+                    if (!string.IsNullOrEmpty(id)) return id;
+                }
+            }
         }
+
+        // 2차: PowerShell (Windows 11 — wmic 제거됨)
+        var ps = RunProcess("powershell",
+            "-NoProfile -Command \"(Get-WmiObject Win32_Processor).ProcessorId\"", 5000);
+        if (ps != null)
+        {
+            var id = ps.Trim();
+            if (!string.IsNullOrEmpty(id)) return id;
+        }
+
         return null;
     }
 
     private static string? GetMacOsUuid()
     {
-        var psi = new ProcessStartInfo("ioreg", "-rd1 -c IOPlatformExpertDevice")
-        {
-            RedirectStandardOutput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        using var p = Process.Start(psi);
-        if (p == null) return null;
-        var output = p.StandardOutput.ReadToEnd();
-        p.WaitForExit(3000);
+        var output = RunProcess("ioreg", "-rd1 -c IOPlatformExpertDevice", 3000);
+        if (output == null) return null;
 
         const string key = "\"IOPlatformUUID\"";
         var idx = output.IndexOf(key, StringComparison.Ordinal);
         if (idx < 0) return null;
-        var eq = output.IndexOf('=', idx);
-        if (eq < 0) return null;
-        var q1 = output.IndexOf('"', eq + 1);
-        var q2 = output.IndexOf('"', q1 + 1);
+        var eq  = output.IndexOf('=', idx);
+        if (eq  < 0) return null;
+        var q1  = output.IndexOf('"', eq + 1);
+        var q2  = output.IndexOf('"', q1 + 1);
         if (q1 < 0 || q2 < 0) return null;
         return output.Substring(q1 + 1, q2 - q1 - 1).Trim();
     }
@@ -83,5 +82,24 @@ public static class MachineIdProvider
             }
         }
         return null;
+    }
+
+    private static string? RunProcess(string fileName, string arguments, int timeoutMs)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(fileName, arguments)
+            {
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var p = Process.Start(psi);
+            if (p == null) return null;
+            var output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(timeoutMs);
+            return output;
+        }
+        catch { return null; }
     }
 }

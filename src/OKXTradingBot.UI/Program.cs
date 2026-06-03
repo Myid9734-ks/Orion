@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.ReactiveUI;
 using OKXTradingBot.UI;
@@ -17,9 +18,27 @@ class Program
         catch (Exception ex)
         {
             WriteCrashLog("Main", ex);
-            throw;
+            ShowFatalError(ex);
         }
     }
+
+    private static void ShowFatalError(Exception ex)
+    {
+        try
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                // Windows: 창 없이 종료되지 않도록 메시지박스 표시
+                MessageBox(IntPtr.Zero,
+                    $"앱 시작 실패:\n{ex.Message}\n\n로그: %USERPROFILE%\\.okxtradingbot\\logs\\crash.log",
+                    "Orion — 시작 오류", 0x10);
+            }
+        }
+        catch { }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int MessageBox(IntPtr hWnd, string text, string caption, uint type);
 
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<App>()
