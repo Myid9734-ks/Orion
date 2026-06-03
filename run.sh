@@ -20,4 +20,4 @@ echo "머신 ID: $MACHINE_ID"
 dotnet build "$PROJECT" -c Release -p:CpuId="$MACHINE_ID" -o "$OUTPUT" || exit 1
 
 # 실행
-exec "./$OUTPUT/OKXTradingBot.UI"
+exec dotnet "./$OUTPUT/OKXTradingBot.UI.dll"
