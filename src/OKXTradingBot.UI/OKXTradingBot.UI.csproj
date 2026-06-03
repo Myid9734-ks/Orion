@@ -32,7 +32,7 @@
     필수: ~/.okxtradingbot/keys/private.pem  (개발자 PC에만 존재)
     출력: <OutDir>/license.dat  (앱과 함께 배포)
   -->
-  <Target Name="GenerateLicense" AfterTargets="Build,Publish" Condition="'$(CpuId)' != ''">
+  <Target Name="GenerateLicense" AfterTargets="Publish" Condition="'$(CpuId)' != ''">
     <PropertyGroup>
       <!-- 만료일 미지정 시 오늘부터 1년 -->
       <_LicenseExpire Condition="'$(LicenseExpire)' == ''">$([System.DateTime]::Now.AddYears(1).ToString("yyyy-MM-dd"))</_LicenseExpire>
@@ -42,10 +42,15 @@
       <_UserHome Condition="'$(HOME)' == ''">$(USERPROFILE)</_UserHome>
       <_PrivateKeyPath>$(_UserHome)/.okxtradingbot/keys/private.pem</_PrivateKeyPath>
       <_LicenseGenProj>$(MSBuildThisFileDirectory)..\OKXTradingBot.LicenseGen\OKXTradingBot.LicenseGen.csproj</_LicenseGenProj>
-      <_LicenseOut>$(OutDir)license.dat</_LicenseOut>
+      <!-- publish -o 옵션 사용 시 PublishDir, 미사용 시 OutDir -->
+      <_BaseDir Condition="'$(PublishDir)' != ''">$(PublishDir)</_BaseDir>
+      <_BaseDir Condition="'$(PublishDir)' == ''">$(OutDir)</_BaseDir>
+      <_LicenseDir>$(_BaseDir)license</_LicenseDir>
+      <_LicenseOut>$(_LicenseDir)/license.dat</_LicenseOut>
     </PropertyGroup>
     <Error Condition="!Exists('$(_PrivateKeyPath)')"
            Text="개인키 파일이 없습니다: $(_PrivateKeyPath)" />
+    <MakeDir Directories="$(_LicenseDir)" />
     <Exec Command="dotnet run --project &quot;$(_LicenseGenProj)&quot; -c Release -- --machine &quot;$(CpuId)&quot; --owner &quot;Orion&quot; --expires $(_LicenseExpire) --key &quot;$(_PrivateKeyPath)&quot; --out &quot;$(_LicenseOut)&quot;" />
     <Message Text="✓ 라이센스 생성 완료: $(_LicenseOut) (CpuId=$(CpuId), 만료: $(_LicenseExpire))" Importance="High" />
   </Target>

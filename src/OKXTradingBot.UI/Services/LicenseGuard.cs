@@ -7,8 +7,8 @@ namespace OKXTradingBot.UI.Services;
 /// 앱 시작 시 라이센스를 검증한다.
 ///
 /// license.dat 탐색 순서:
-///   1. 앱 실행 폴더 (빌드 시 자동 생성된 번들 라이센스)
-///   2. %UserProfile%/.okxtradingbot/license.dat (수동 설치)
+///   1. 앱 실행 폴더/license/license.dat (빌드 시 자동 생성)
+///   2. %UserProfile%/.okxtradingbot/license/license.dat (수동 설치)
 ///
 /// 공개키: 어셈블리 내장 리소스 (OKXTradingBot.UI.Assets.public.pem)
 /// </summary>
@@ -16,7 +16,7 @@ public static class LicenseGuard
 {
     private static readonly string _userLicensePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".okxtradingbot", "license.dat");
+        ".okxtradingbot", "license", "license.dat");
 
     /// <summary>실제로 로드된 license.dat 경로 (앱 폴더 우선).</summary>
     public static string LicensePath
@@ -24,7 +24,7 @@ public static class LicenseGuard
         get
         {
             var appDir = AppContext.BaseDirectory;
-            var appLicense = Path.Combine(appDir, "license.dat");
+            var appLicense = Path.Combine(appDir, "license", "license.dat");
             if (File.Exists(appLicense)) return appLicense;
             return _userLicensePath;
         }
