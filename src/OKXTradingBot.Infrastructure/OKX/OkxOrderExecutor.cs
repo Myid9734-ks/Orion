@@ -74,8 +74,8 @@ public class OkxOrderExecutor : IOrderExecutor
 
             if (limitRes.Success)
             {
-                // 3초 대기 → 체결 확인. 미체결이면 1회 정정(현재가 추정 = 동일 px), 추가 3초, 최종 시장가 fallback
-                var fill = await _rest.WaitForFillAsync(request.Symbol, limitRes.OrderId, timeoutMs: 3000);
+                // 10초 대기 → 체결 확인. 미체결이면 취소 후 시장가 fallback
+                var fill = await _rest.WaitForFillAsync(request.Symbol, limitRes.OrderId, timeoutMs: 10000);
                 if (fill.Success && fill.FilledSize > 0)
                 {
                     _logger.LogInformation("[Executor] 지정가 체결: ordId={oid} px={px} sz={sz}",
