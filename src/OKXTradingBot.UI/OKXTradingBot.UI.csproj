@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
+    <AssemblyName>Orion</AssemblyName>
+    <ApplicationIcon>Assets\Orion.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\OKXTradingBot.Core\OKXTradingBot.Core.csproj" />
@@ -12,6 +14,7 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Assets\public.pem" />
+    <None Include="Assets\Orion.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia"                Version="11.1.0" />

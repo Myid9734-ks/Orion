@@ -28,4 +28,4 @@ dotnet publish "$PROJECT" -c Release -r win-x64 --self-contained \
     -p:CpuId="$CPU_ID" $EXPIRE_ARG -o "$OUTPUT" || exit 1
 
 echo ""
-echo "✓ 완료: $OUTPUT/OKXTradingBot.UI.exe"
+echo "✓ 완료: $OUTPUT/Orion.exe"

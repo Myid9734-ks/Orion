@@ -34,6 +34,12 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     # 실행 파일 + 전체 파일 복사
     cp -R "$OUTPUT/"* "$APP_BUNDLE/Contents/MacOS/"
 
+    # 아이콘 복사
+    ICON_SRC="src/OKXTradingBot.UI/Assets/Orion.icns"
+    if [ -f "$ICON_SRC" ]; then
+        cp "$ICON_SRC" "$APP_BUNDLE/Contents/Resources/Orion.icns"
+    fi
+
     # Info.plist 생성
     cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -41,13 +47,15 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>OKXTradingBot.UI</string>
+    <string>Orion</string>
     <key>CFBundleIdentifier</key>
     <string>com.orion.okxtradingbot</string>
     <key>CFBundleName</key>
     <string>Orion</string>
     <key>CFBundleDisplayName</key>
     <string>Orion Trading Bot</string>
+    <key>CFBundleIconFile</key>
+    <string>Orion</string>
     <key>CFBundleVersion</key>
     <string>1.0</string>
     <key>CFBundlePackageType</key>
@@ -58,11 +66,11 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
 </plist>
 PLIST
 
-    chmod +x "$APP_BUNDLE/Contents/MacOS/OKXTradingBot.UI"
+    chmod +x "$APP_BUNDLE/Contents/MacOS/Orion"
     echo "✓ .app 번들 생성 완료: $APP_BUNDLE"
     echo "  → 파인더에서 더블클릭으로 실행 가능"
     echo ""
 fi
 
 # 실행
-exec "./$OUTPUT/OKXTradingBot.UI"
+exec "./$OUTPUT/Orion"
