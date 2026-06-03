@@ -24,6 +24,9 @@
                      VerticalAlignment="Center"/>
         </StackPanel>
         <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <TextBlock Text="{Binding LicenseExpireText}"
+                     Foreground="{Binding LicenseExpireBrush}"
+                     FontSize="11" VerticalAlignment="Center" Opacity="0.85"/>
           <Ellipse Width="8" Height="8"
                    Fill="{Binding SelectedSymbolTab.StatusBrush, FallbackValue=Gray}"/>
           <TextBlock Text="{Binding SelectedSymbolTab.StatusText, FallbackValue=대기 중}"

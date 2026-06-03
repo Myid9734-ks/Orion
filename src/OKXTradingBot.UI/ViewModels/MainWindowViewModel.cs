@@ -653,6 +653,34 @@ public class MainWindowViewModel : ReactiveObject
         : new SolidColorBrush(Color.Parse("#4CAF50"));
     public string ThemeButtonText  => _isDarkMode ? "☀ 라이트" : "🌙 다크";
 
+    // ── 라이센스 만료 표시 ─────────────────────────────────────────────
+    public static string LicenseExpireText
+    {
+        get
+        {
+            var result = Services.LicenseGuard.Check();
+            if (!result.IsValid || result.Payload?.ExpiresAt == null)
+                return "라이센스 없음";
+            var expire = result.Payload.ExpiresAt.Value.ToLocalTime();
+            var days   = (expire.Date - DateTime.Today).Days;
+            return $"라이센스 만료: {expire:yyyy-MM-dd} ({days}일)";
+        }
+    }
+
+    public static IBrush LicenseExpireBrush
+    {
+        get
+        {
+            var result = Services.LicenseGuard.Check();
+            if (!result.IsValid || result.Payload?.ExpiresAt == null)
+                return Brushes.Tomato;
+            var days = (result.Payload.ExpiresAt.Value.ToLocalTime().Date - DateTime.Today).Days;
+            if (days <= 7)  return Brushes.Tomato;
+            if (days <= 30) return new SolidColorBrush(Color.Parse("#FFB300"));
+            return new SolidColorBrush(Color.Parse("#888888"));
+        }
+    }
+
     private void ToggleTheme()
     {
         _isDarkMode = !_isDarkMode;
