@@ -359,6 +359,7 @@ public class SymbolTabViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(ExchangeRateText));
             this.RaisePropertyChanged(nameof(TotalBudgetKrwText));
             this.RaisePropertyChanged(nameof(AccountBalanceKrwText));
+            this.RaisePropertyChanged(nameof(TotalPositionText));
             // 환율 조회 완료 시 기존 레코드 원화 갱신
             foreach (var r in TradeHistory)
                 r.UsdKrwRate = value;
@@ -377,6 +378,7 @@ public class SymbolTabViewModel : ReactiveObject
             this.RaiseAndSetIfChanged(ref _leverage, value ?? 10);
             this.RaisePropertyChanged(nameof(TotalPositionText));
             this.RaisePropertyChanged(nameof(ExpectedProfitText));
+            this.RaisePropertyChanged(nameof(ActualPriceMoveText));
             this.RaisePropertyChanged(nameof(BudgetWarningText));
             this.RaisePropertyChanged(nameof(HasBudgetWarning));
             this.RaisePropertyChanged(nameof(RequiredTotalText));
@@ -435,9 +437,15 @@ public class SymbolTabViewModel : ReactiveObject
         {
             this.RaiseAndSetIfChanged(ref _targetProfit, value ?? 0.5m);
             this.RaisePropertyChanged(nameof(ExpectedProfitText));
+            this.RaisePropertyChanged(nameof(ActualPriceMoveText));
             MarkUnsaved();
         }
     }
+
+    public string ActualPriceMoveText =>
+        _targetProfit > 0 && _leverage > 0
+            ? $"실제 가격 이동: {_targetProfit / _leverage:F3}%"
+            : "";
 
     public List<decimal> MartinGapSteps
     {
@@ -584,7 +592,7 @@ public class SymbolTabViewModel : ReactiveObject
             ? $"{TotalBudget / MartinCount:F2} USDT" : "-";
 
     public string RequiredSeedText      => TotalBudget > 0 ? $"${TotalBudget:N2}" : "-";
-    public string TotalPositionText     => TotalBudget > 0 && Leverage > 0 ? $"${TotalBudget * Leverage:N2}" : "-";
+    public string TotalPositionText     => TotalBudget > 0 && Leverage > 0 ? $"{TotalBudget * Leverage:F2} USDT" + (_usdKrwRate > 0 ? $"\n≈ ₩{TotalBudget * Leverage * _usdKrwRate:N0}" : "") : "-";
 
     public string BudgetWarningText => ComputeBudgetAdjustment().Warning;
     public bool   HasBudgetWarning  => !string.IsNullOrEmpty(BudgetWarningText);
@@ -1125,12 +1133,16 @@ public class SymbolTabViewModel : ReactiveObject
         _core.OnPositionUpdated += HandlePositionUpdated;
         _core.OnLogMessage      += HandleLogMessage;
         _core.OnTradeClosed     += HandleTradeClosed;
-        _core.OnBotStopped      += (_, _) => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        _core.OnBotStopped      += (_, _) =>
         {
-            IsRunning = false;
-            StopPricePolling();
-            _logService?.WriteSeparator("매매 종료");
-        });
+            _cts?.Cancel();
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                IsRunning = false;
+                StopPricePolling();
+                _logService?.WriteSeparator("매매 종료");
+            });
+        };
 
         // 수수료율 조회 (UI 예상수수료 표시 갱신)
         var (taker, maker) = await executor.GetFeeRatesAsync(_symbol);
@@ -1190,7 +1202,6 @@ public class SymbolTabViewModel : ReactiveObject
 
         // 현재 사이클 완료 후 자연 종료 — IsRunning은 HandleTradeClosed에서 처리
         if (_core != null) await _core.StopAsync();
-        AddLog("⏹ 중지 예약 — 현재 사이클(익절/손절) 완료 후 자동 종료");
     }
 
     /// <summary>라이센스 만료 시 외부에서 호출 — 신규 진입 차단, 현재 포지션 유지.</summary>

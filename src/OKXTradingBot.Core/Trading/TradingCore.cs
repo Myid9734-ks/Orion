@@ -222,12 +222,28 @@ public class TradingCore
 
     /// <summary>
     /// 현재 사이클 완료 후 종료 — 자동반복 OFF와 동일.
-    /// 모든 주문/감시 유지, 익절/손절 체결 후 자연 종료.
+    /// 포지션이 없으면 즉시 종료, 있으면 익절/손절 대기 (최대 30초 후 강제 종료).
     /// </summary>
     public Task StopAsync()
     {
         _autoRepeat = false;
-        Log("⏹ 중지 예약 — 현재 사이클 완료 후 종료 (마틴/익절/감시 계속 유지)");
+
+        if (_position == null || _position.Status != PositionStatus.Open)
+        {
+            Log("⏹ 중지 — 열린 포지션 없음, 즉시 종료");
+            return Task.CompletedTask;
+        }
+
+        Log("⏹ 중지 예약 — 현재 사이클(익절/손절) 완료 후 종료 (최대 30초 대기)");
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30));
+            if (_position != null && _position.Status == PositionStatus.Open)
+            {
+                Log("⚠️ 중지 타임아웃(30초) — 강제 종료 실행");
+                await ForceCloseAsync();
+            }
+        });
         return Task.CompletedTask;
     }
 
@@ -414,6 +430,8 @@ public class TradingCore
         var msg = $"🔴 강제 종료 완료 | 완료 사이클: {_cycleCount}회 | 세션 손익: {_sessionPnl:+0.00;-0.00;0.00} USDT";
         Log(msg);
         await NotifyAsync(msg, NotificationType.BotStartStop);
+
+        OnBotStopped?.Invoke(this, EventArgs.Empty);
     }
 
     // ═════════════════════════════════════════════

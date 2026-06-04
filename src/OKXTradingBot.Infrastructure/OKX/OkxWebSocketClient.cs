@@ -118,6 +118,7 @@ public class OkxWebSocketClient : IAsyncDisposable
     private void ProcessMessage(string raw)
     {
         OnRawMessage?.Invoke(this, raw); // 디버그용 raw 메시지 전달
+        if (raw == "pong") return;
         if (raw.Contains("\"event\"")) return; // subscribe 확인 메시지 무시
 
         try

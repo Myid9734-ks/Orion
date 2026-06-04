@@ -288,6 +288,10 @@
                                Minimum="0.1" Maximum="10" Increment="0.1"
                                FormatString="F1" FontSize="13" FontWeight="Bold"/>
               </Grid>
+              <TextBlock Text="{Binding ActualPriceMoveText}"
+                         FontSize="10" Foreground="{DynamicResource TextSecondary}"
+                         Margin="0,-2,0,0"
+                         IsVisible="{Binding ActualPriceMoveText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
               <!-- 모드 인디케이터 + 단계별 설정 버튼 -->
               <Grid ColumnDefinitions="*,6,Auto">
@@ -348,6 +352,7 @@
                          FontSize="11" FontWeight="Bold"
                          Foreground="{Binding RequiredTotalColor}"
                          Margin="0,2,0,0"/>
+
 
               <!-- 마틴 진행 바 -->
               <Grid ColumnDefinitions="*,Auto" Margin="0,3,0,0">
@@ -446,7 +451,8 @@
                 <TextBlock Text="총 투자금 (레버리지 포함)" FontSize="11"
                            Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center"/>
                 <TextBlock Grid.Column="1" Text="{Binding TotalPositionText}"
-                           FontSize="12" FontWeight="Bold" Foreground="#FF9800"/>
+                           FontSize="12" FontWeight="Bold" Foreground="#FF9800"
+                           TextAlignment="Right"/>
               </Grid>
               <Grid ColumnDefinitions="*,Auto">
                 <TextBlock Text="예상 수익" FontSize="11"
