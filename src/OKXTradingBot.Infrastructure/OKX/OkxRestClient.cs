@@ -20,16 +20,37 @@ public class OkxRestClient
     private readonly string _passphrase;
     private readonly ILogger<OkxRestClient> _logger;
 
+    private readonly bool _simulated;
+
     public OkxRestClient(string apiKey, string apiSecret, string passphrase,
-                         ILogger<OkxRestClient> logger)
+                         ILogger<OkxRestClient> logger, bool simulated = false,
+                         string? proxyUrl = null)
     {
         _apiKey     = apiKey;
         _apiSecret  = apiSecret;
         _passphrase = passphrase;
         _logger     = logger;
-        _http       = new HttpClient { BaseAddress = new Uri(BaseUrl) };
+        _simulated  = simulated;
+
+        // 프록시: 인자 → 환경변수 순으로 적용
+        var proxy = proxyUrl
+                 ?? Environment.GetEnvironmentVariable("HTTPS_PROXY")
+                 ?? Environment.GetEnvironmentVariable("https_proxy");
+
+        HttpMessageHandler handler = string.IsNullOrEmpty(proxy)
+            ? new HttpClientHandler()
+            : new HttpClientHandler
+              {
+                  Proxy    = new System.Net.WebProxy(proxy),
+                  UseProxy = true
+              };
+
+        _http = new HttpClient(handler) { BaseAddress = new Uri(BaseUrl) };
         _http.DefaultRequestHeaders.Accept.Add(
             new MediaTypeWithQualityHeaderValue("application/json"));
+
+        if (!string.IsNullOrEmpty(proxy))
+            _logger.LogInformation("[OkxRestClient] 프록시 사용: {proxy}", proxy);
     }
 
     // ─────────────────────────────────────────────
@@ -81,6 +102,29 @@ public class OkxRestClient
     // ─────────────────────────────────────────────
 
     /// <summary>USDT 잔고 조회</summary>
+    /// <summary>포지션 기간 동안 발생한 펀딩비 합계 (USDT). OKX bills type=8</summary>
+    public async Task<decimal> GetFundingFeeAsync(string instId, DateTime from, DateTime to)
+    {
+        try
+        {
+            var fromMs = new DateTimeOffset(from, TimeSpan.Zero).ToUnixTimeMilliseconds();
+            var toMs   = new DateTimeOffset(to,   TimeSpan.Zero).ToUnixTimeMilliseconds();
+            var url    = $"/api/v5/account/bills?instType=SWAP&instId={instId}&type=8&begin={fromMs}&end={toMs}&limit=100";
+            var json   = await GetPrivateAsync(url);
+            var doc    = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("data", out var data)) return 0m;
+
+            decimal total = 0;
+            foreach (var item in data.EnumerateArray())
+            {
+                if (item.TryGetProperty("pnl", out var pnl) && decimal.TryParse(pnl.GetString(), out var val))
+                    total += val;
+            }
+            return total;
+        }
+        catch { return 0m; }
+    }
+
     public async Task<decimal> GetBalanceAsync()
     {
         var json = await GetPrivateAsync("/api/v5/account/balance?ccy=USDT");
@@ -132,19 +176,34 @@ public class OkxRestClient
     /// <summary>레버리지 및 마진 모드 설정 (mgnMode: "cross" | "isolated")</summary>
     public async Task<bool> SetLeverageAsync(string instId, int leverage, string mgnMode = "cross")
     {
-        var body = JsonSerializer.Serialize(new
+        // 헤지 모드 + isolated: long/short 각각 설정 필요
+        if (mgnMode == "isolated")
         {
-            instId,
-            lever   = leverage.ToString(),
-            mgnMode
-        });
+            var longOk  = await SetLeverageInternalAsync(instId, leverage, mgnMode, "long");
+            var shortOk = await SetLeverageInternalAsync(instId, leverage, mgnMode, "short");
+            return longOk && shortOk;
+        }
+        return await SetLeverageInternalAsync(instId, leverage, mgnMode, null);
+    }
+
+    private async Task<bool> SetLeverageInternalAsync(string instId, int leverage, string mgnMode, string? posSide)
+    {
+        string body;
+        if (posSide != null)
+        {
+            body = JsonSerializer.Serialize(new { instId, lever = leverage.ToString(), mgnMode, posSide });
+        }
+        else
+        {
+            body = JsonSerializer.Serialize(new { instId, lever = leverage.ToString(), mgnMode });
+        }
 
         var json = await PostPrivateAsync("/api/v5/account/set-leverage", body);
         var doc  = JsonDocument.Parse(json);
         var code = doc.RootElement.GetProperty("code").GetString();
         if (code != "0")
-            _logger.LogWarning("[Leverage] 설정 실패: {instId} x{lev} [{mode}] | raw={json}",
-                instId, leverage, mgnMode, json);
+            _logger.LogWarning("[Leverage] 설정 실패: {instId} x{lev} [{mode}] posSide={ps} | raw={json}",
+                instId, leverage, mgnMode, posSide ?? "none", json);
         return code == "0";
     }
 
@@ -203,12 +262,20 @@ public class OkxRestClient
         _logger.LogInformation("[🔍TEST-1] 체결 상세: fillPx={px} fillSz={sz} state={st}",
             filled.FilledPrice, filled.FilledSize, filled.State);
 
+        // 명목금액 계산 (ctVal은 ConvertUsdtToContractsAsync에서 이미 캐시됨)
+        var (ctVal2, _, _) = await GetInstrumentSpecAsync(instId);
+        var fillPx = filled.FilledPrice > 0 ? filled.FilledPrice : currentPx;
+        var filledNotional = contracts * ctVal2 * fillPx;
+        _logger.LogInformation("[시장가] 명목금액: {notional:F4} USDT ({c}계약 × ctVal={cv} × px={px})",
+            filledNotional, contracts, ctVal2, fillPx);
+
         return new OrderResult
         {
-            Success      = true,
-            OrderId      = ordId,
-            FilledPrice  = filled.FilledPrice,
-            FilledSize   = filled.FilledSize
+            Success        = true,
+            OrderId        = ordId,
+            FilledPrice    = filled.FilledPrice,
+            FilledSize     = filled.FilledSize,
+            FilledNotional = filledNotional
         };
     }
 
@@ -775,21 +842,43 @@ public class OkxRestClient
 
     private async Task<string> GetPrivateAsync(string path)
     {
-        var req = BuildPrivateRequest(HttpMethod.Get, path, "");
-        var resp = await _http.SendAsync(req);
-        var json = await resp.Content.ReadAsStringAsync();
-        EnsureSuccessOrLog("GET", path, resp, json);
-        return json;
+        for (int attempt = 1; attempt <= 3; attempt++)
+        {
+            var req  = BuildPrivateRequest(HttpMethod.Get, path, "");
+            var resp = await _http.SendAsync(req);
+            var json = await resp.Content.ReadAsStringAsync();
+            if ((int)resp.StatusCode == 429)
+            {
+                var wait = attempt * 1000;
+                _logger.LogWarning("[HTTP] 429 Rate Limit — {delay}ms 후 재시도 ({attempt}/3): {path}", wait, attempt, path);
+                await Task.Delay(wait);
+                continue;
+            }
+            EnsureSuccessOrLog("GET", path, resp, json);
+            return json;
+        }
+        throw new HttpRequestException($"OKX GET {path} — 429 재시도 3회 초과");
     }
 
     private async Task<string> PostPrivateAsync(string path, string body)
     {
-        var req = BuildPrivateRequest(HttpMethod.Post, path, body);
-        req.Content = new StringContent(body, Encoding.UTF8, "application/json");
-        var resp = await _http.SendAsync(req);
-        var json = await resp.Content.ReadAsStringAsync();
-        EnsureSuccessOrLog("POST", path, resp, json);
-        return json;
+        for (int attempt = 1; attempt <= 3; attempt++)
+        {
+            var req  = BuildPrivateRequest(HttpMethod.Post, path, body);
+            req.Content = new StringContent(body, Encoding.UTF8, "application/json");
+            var resp = await _http.SendAsync(req);
+            var json = await resp.Content.ReadAsStringAsync();
+            if ((int)resp.StatusCode == 429)
+            {
+                var wait = attempt * 1000;
+                _logger.LogWarning("[HTTP] 429 Rate Limit — {delay}ms 후 재시도 ({attempt}/3): {path}", wait, attempt, path);
+                await Task.Delay(wait);
+                continue;
+            }
+            EnsureSuccessOrLog("POST", path, resp, json);
+            return json;
+        }
+        throw new HttpRequestException($"OKX POST {path} — 429 재시도 3회 초과");
     }
 
     /// <summary>
@@ -821,7 +910,7 @@ public class OkxRestClient
         req.Headers.Add("OK-ACCESS-SIGN",      sign);
         req.Headers.Add("OK-ACCESS-TIMESTAMP", timestamp);
         req.Headers.Add("OK-ACCESS-PASSPHRASE", _passphrase);
-        req.Headers.Add("x-simulated-trading", "0"); // 1이면 모의거래
+        req.Headers.Add("x-simulated-trading", _simulated ? "1" : "0");
         return req;
     }
 

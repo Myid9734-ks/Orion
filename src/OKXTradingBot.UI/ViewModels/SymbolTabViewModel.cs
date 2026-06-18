@@ -23,11 +23,12 @@ public record BuyPlanDialogArgs(
     string MarginMode,
     int ConfiguredCount,
     int EffectiveCount,
-    List<(string Label, string Amount, bool IsOver, string Profit, string ProfitKrw, string Fee, string NetProfit, bool IsProfitWarning, bool IsNetNegative)> Steps,
+    List<(string Label, string Amount, bool IsOver, string Profit, string ProfitKrw, string Fee, string NetProfit, bool IsProfitWarning, bool IsNetNegative, string PriceMoveText)> Steps,
     decimal RequiredTotal,
     decimal Budget,
     string Warning,
-    bool IsMockMode);
+    bool IsMockMode,
+    string TotalPriceMoveText = "");
 
 
 /// <summary>봇 시작 시 부모 VM에서 전달받는 전역 설정 (API 키 등)</summary>
@@ -36,6 +37,9 @@ public class GlobalBotConfig
     public string ApiKey                 { get; init; } = "";
     public string ApiSecret              { get; init; } = "";
     public string Passphrase             { get; init; } = "";
+    public string DemoApiKey             { get; init; } = "";
+    public string DemoApiSecret          { get; init; } = "";
+    public string DemoPassphrase         { get; init; } = "";
     public string GptApiKey              { get; init; } = "";
     public string GptModel               { get; init; } = "";
     public int    GptCandleCount         { get; init; } = 30;
@@ -54,6 +58,10 @@ public class GlobalBotConfig
     public bool   QuietHoursEnabled      { get; init; }
     public string QuietStart             { get; init; } = "23:00";
     public string QuietEnd               { get; init; } = "07:00";
+    public bool   TradeRestrictEnabled   { get; init; }
+    public string TradeRestrictStart     { get; init; } = "02:00";
+    public string TradeRestrictEnd       { get; init; } = "06:00";
+    public string ProxyUrl               { get; init; } = "";
     public bool   IsBacktestMode         { get; init; }
 }
 
@@ -113,6 +121,7 @@ public class SymbolTabViewModel : ReactiveObject
     private bool             _stopLossEnabled   = false;
     private decimal       _stopLossPercent   = 3.0m;
     private bool          _autoRepeat        = true;
+    private bool          _reinvestProfit    = false;
     private decimal       _accountBalance    = 1000m;
     private bool          _isLiveMode        = false;
     private decimal       _usdKrwRate        = 0m;    // 0 = 아직 미조회
@@ -124,6 +133,7 @@ public class SymbolTabViewModel : ReactiveObject
 
     // ── 런타임 상태 ───────────────────────────────────────────────────
     private bool                    _isRunning;
+    private bool                    _isStopping;
     private decimal                 _currentPrice;
     private IReadOnlyList<Candle>   _recentCandles   = Array.Empty<Candle>();
     private string                  _positionStatusText = "대기 중";
@@ -136,6 +146,7 @@ public class SymbolTabViewModel : ReactiveObject
     private decimal                 _realizedPnl;
     private IBrush                  _directionBrush  = Brushes.Gray;
     private IBrush                  _pnlBrush        = Brushes.Gray;
+    private IReadOnlyList<OKXTradingBot.UI.Views.ChartPriceLine> _chartPriceLines = Array.Empty<OKXTradingBot.UI.Views.ChartPriceLine>();
 
     // ── 통계 ──────────────────────────────────────────────────────────
     private decimal _totalPnl;
@@ -209,10 +220,22 @@ public class SymbolTabViewModel : ReactiveObject
         // USD/KRW 환율 조회
         _ = FetchExchangeRateAsync();
 
-        // 초기 모드 설정 + 실거래면 즉시 잔고 조회 (기본값 1000 표시 방지)
+        // 초기 모드 설정 + 즉시 잔고 조회 (실거래: 실계좌 / 모의거래: OKX 모의계좌)
         _isLiveMode = !_getGlobalConfig().IsBacktestMode;
-        if (_isLiveMode)
-            _ = FetchBalanceAsync();
+        _ = FetchBalanceAsync();
+
+        // 펀딩비율 초기 조회 + 5분마다 갱신
+        _ = FetchFundingRateAsync();
+        _ = StartFundingRatePollingAsync();
+    }
+
+    private async Task StartFundingRatePollingAsync()
+    {
+        while (true)
+        {
+            await Task.Delay(TimeSpan.FromMinutes(5));
+            await FetchFundingRateAsync();
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -378,7 +401,7 @@ public class SymbolTabViewModel : ReactiveObject
             this.RaiseAndSetIfChanged(ref _leverage, value ?? 10);
             this.RaisePropertyChanged(nameof(TotalPositionText));
             this.RaisePropertyChanged(nameof(ExpectedProfitText));
-            this.RaisePropertyChanged(nameof(ActualPriceMoveText));
+            this.RaisePropertyChanged(nameof(TotalPriceMoveText));
             this.RaisePropertyChanged(nameof(BudgetWarningText));
             this.RaisePropertyChanged(nameof(HasBudgetWarning));
             this.RaisePropertyChanged(nameof(RequiredTotalText));
@@ -420,6 +443,7 @@ public class SymbolTabViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(HasBudgetWarning));
             this.RaisePropertyChanged(nameof(RequiredTotalText));
             this.RaisePropertyChanged(nameof(RequiredTotalColor));
+            this.RaisePropertyChanged(nameof(TotalPriceMoveText));
             MarkUnsaved();
         }
     }
@@ -427,7 +451,12 @@ public class SymbolTabViewModel : ReactiveObject
     public decimal? MartinGap
     {
         get => _martinGap;
-        set { this.RaiseAndSetIfChanged(ref _martinGap, value ?? 0.5m); MarkUnsaved(); }
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _martinGap, value ?? 0.5m);
+            this.RaisePropertyChanged(nameof(TotalPriceMoveText));
+            MarkUnsaved();
+        }
     }
 
     public decimal? TargetProfit
@@ -435,16 +464,15 @@ public class SymbolTabViewModel : ReactiveObject
         get => _targetProfit;
         set
         {
-            this.RaiseAndSetIfChanged(ref _targetProfit, value ?? 0.5m);
+            this.RaiseAndSetIfChanged(ref _targetProfit, value ?? 0.1m);
             this.RaisePropertyChanged(nameof(ExpectedProfitText));
-            this.RaisePropertyChanged(nameof(ActualPriceMoveText));
             MarkUnsaved();
         }
     }
 
-    public string ActualPriceMoveText =>
-        _targetProfit > 0 && _leverage > 0
-            ? $"실제 가격 이동: {_targetProfit / _leverage:F3}%"
+    public string TotalPriceMoveText =>
+        _martinCount > 1 && _leverage > 0
+            ? $"마지막 단계까지: ±{(_martinCount - 1) * (_martinGap > 0 ? _martinGap : 0.5m):F2}%"
             : "";
 
     public List<decimal> MartinGapSteps
@@ -572,13 +600,19 @@ public class SymbolTabViewModel : ReactiveObject
     public decimal? StopLossPercent
     {
         get => _stopLossPercent;
-        set { this.RaiseAndSetIfChanged(ref _stopLossPercent, value ?? 3.0m); MarkUnsaved(); }
+        set { this.RaiseAndSetIfChanged(ref _stopLossPercent, value ?? 1.5m); MarkUnsaved(); }
     }
 
     public bool AutoRepeat
     {
         get => _autoRepeat;
         set => this.RaiseAndSetIfChanged(ref _autoRepeat, value);
+    }
+
+    public bool ReinvestProfit
+    {
+        get => _reinvestProfit;
+        set => this.RaiseAndSetIfChanged(ref _reinvestProfit, value);
     }
 
     // ── 자동 계산 ─────────────────────────────────────────────────────
@@ -697,45 +731,53 @@ public class SymbolTabViewModel : ReactiveObject
 
     public BuyPlanDialogArgs BuildBuyPlanArgs(bool isMockMode)
     {
-        var (effectiveCount, effectiveBudget, warning) = ComputeBudgetAdjustment();
-
-        // 유효 회차 기준 금액 계산
+        // OKX 최소 계약 기반 동적 단계 계산 (TradingCore.StartAsync와 동일한 로직)
         var planConfig = new OKXTradingBot.Core.Models.TradeConfig
-        {
-            TotalBudget         = effectiveBudget,
-            MartinCount         = effectiveCount,
-            MartinAmountWeights = _martinAmountWeights.Take(effectiveCount).ToList(),
-            AmountMode          = _amountMode
-        };
-        var effectiveAmounts = planConfig.GetAllStepAmounts();
-
-        // 전체 회차 목록 (초과 회차는 IsOver=true)
-        var origConfig = new OKXTradingBot.Core.Models.TradeConfig
         {
             TotalBudget         = _totalBudget,
             MartinCount         = _martinCount,
-            MartinAmountWeights = _martinAmountWeights,
+            MartinAmountWeights = _martinAmountWeights.ToList(),
             AmountMode          = _amountMode
         };
-        // 회차별 누적 예상 수익 / 누적 수수료 계산 (TradingCore와 동일한 계산식)
-        // 목표수익%는 레버리지 포함 기준 → 실제 가격이동 = targetPct / leverage
-        // 수익(gross) = 누적투자금(마진) × (targetPct / leverage)
-        // 수수료 = 누적투자금(마진) × (Maker + Taker)
-        var feeRate   = _takerFeeRate + 0.0002m; // Maker 0.02% + Taker 0.05%
-        var leverage  = (decimal)(_leverage > 0 ? _leverage : 1);
 
-        var steps = new List<(string Label, string Amount, bool IsOver, string Profit, string ProfitKrw, string Fee, string NetProfit, bool IsProfitWarning, bool IsNetNegative)>();
-        decimal cumAmount = 0;
-        for (int i = 0; i < _martinCount; i++)
+        string warning = "";
+        if (!isMockMode && _currentPrice > 0 && _getSymbolInfo != null)
         {
-            decimal stepAmt = i < effectiveAmounts.Count
-                ? effectiveAmounts[i]
-                : origConfig.GetAmountForStep(i + 1);
-            bool isOver = i >= effectiveAmounts.Count;
+            var (minSz, ctVal) = _getSymbolInfo(_symbol);
+            var minNotional = minSz * ctVal * _currentPrice;
+            if (minNotional > 0)
+            {
+                planConfig.SetDynamicSteps(minNotional, _martinCount);
+                if (planConfig.MartinCount < _martinCount)
+                    warning = $"OKX 최소명목 {minNotional:F2} USDT 기준 → 예산 {_totalBudget:F2} USDT로 {planConfig.MartinCount}단계 확정 (요청 {_martinCount}단계)";
+            }
+        }
+        else
+        {
+            var (effectiveCount, effectiveBudget, adjWarning) = ComputeBudgetAdjustment();
+            planConfig.TotalBudget         = effectiveBudget;
+            planConfig.MartinCount         = effectiveCount;
+            planConfig.MartinAmountWeights = _martinAmountWeights.Take(effectiveCount).ToList();
+            warning = adjWarning;
+        }
+
+        var effectiveAmounts = planConfig.GetAllStepAmounts();
+
+        var feeRate   = _takerFeeRate + 0.0002m;
+        var leverage  = (decimal)(_leverage > 0 ? _leverage : 1);
+        var dynCount  = planConfig.MartinCount;
+
+        var steps = new List<(string Label, string Amount, bool IsOver, string Profit, string ProfitKrw, string Fee, string NetProfit, bool IsProfitWarning, bool IsNetNegative, string PriceMoveText)>();
+        decimal cumAmount = 0;
+        decimal cumGap    = 0;
+        for (int i = 0; i < dynCount; i++)
+        {
+            decimal stepAmt = effectiveAmounts[i];
 
             cumAmount += stepAmt;
-            var profit = cumAmount * (_targetProfit / 100m / leverage);  // 마진 × 가격이동%
-            var fee    = cumAmount * feeRate;                             // 마진 × 왕복수수료율
+            var targetPct = _targetProfitSteps.Count > i ? _targetProfitSteps[i] : _targetProfit;
+            var profit = cumAmount * (targetPct / 100m);
+            var fee    = cumAmount * feeRate;
             var isProfitWarning = profit <= fee;
 
             var netAmt    = profit - fee;
@@ -744,30 +786,44 @@ public class SymbolTabViewModel : ReactiveObject
                 ? $"{netAmt:+0.0000;-0.0000}\n≈ ₩{netAmt * _usdKrwRate:N0}"
                 : $"{netAmt:+0.0000;-0.0000}";
 
+            var tpMovePct     = targetPct;
+            var priceMoveText = i == 0
+                ? $"즉시진입 / 익절 {tpMovePct:F3}%"
+                : $"역방향 {cumGap:F2}% / 익절 {tpMovePct:F3}%";
+
+            if (i < dynCount - 1)
+                cumGap += GetMartinGapForStep(i + 2);
+
             steps.Add((
                 $"{i + 1}회차",
                 $"{stepAmt:F2} USDT",
-                isOver,
+                false,
                 $"+{profit:F4} USDT",
                 profitKrw,
                 $"-{fee:F4} USDT",
                 netKrw,
                 isProfitWarning,
-                netAmt < 0
+                netAmt < 0,
+                priceMoveText
             ));
         }
 
+        var totalPriceMoveText = dynCount > 1
+            ? $"±{cumGap:F2}% (레버리지 포함 ±{cumGap * leverage:F1}%)"
+            : "단일 진입";
+
         return new BuyPlanDialogArgs(
-            Symbol:          _symbol,
-            Leverage:        _leverage,
-            MarginMode:      _marginMode,
-            ConfiguredCount: _martinCount,
-            EffectiveCount:  effectiveCount,
-            Steps:           steps,
-            RequiredTotal:   effectiveAmounts.Sum(),
-            Budget:          _totalBudget,
-            Warning:         warning,
-            IsMockMode:      isMockMode);
+            Symbol:              _symbol,
+            Leverage:            _leverage,
+            MarginMode:          _marginMode,
+            ConfiguredCount:     _martinCount,
+            EffectiveCount:      dynCount,
+            Steps:               steps,
+            RequiredTotal:       effectiveAmounts.Sum(),
+            Budget:              _totalBudget,
+            Warning:             warning,
+            IsMockMode:          isMockMode,
+            TotalPriceMoveText:  totalPriceMoveText);
     }
 
     public string ExpectedProfitText =>
@@ -837,6 +893,18 @@ public class SymbolTabViewModel : ReactiveObject
 
     public bool IsNotRunning => !_isRunning;
 
+    public bool IsStopping
+    {
+        get => _isStopping;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _isStopping, value);
+            this.RaisePropertyChanged(nameof(StopButtonText));
+        }
+    }
+
+    public string StopButtonText => _isStopping ? "⏳  중지중..." : "■  중지";
+
     /// <summary>실거래 모드 여부 — AXAML 바인딩용 (잔고 필드 잠금 등). MainWindow 모드 전환 시 갱신.</summary>
     public bool IsLiveMode
     {
@@ -851,12 +919,13 @@ public class SymbolTabViewModel : ReactiveObject
     /// <summary>모의거래 모드 여부 — AllowSpin 바인딩용 (!IsLiveMode 대신 사용, 컴파일 바인딩 안전).</summary>
     public bool IsNotLiveMode => !_isLiveMode;
 
-    /// <summary>MainWindowViewModel 이 모드 전환 시 호출 — IsLiveMode 갱신 + 실거래 전환이면 잔고 재조회.</summary>
+    public bool IsLiveTradingSupported => BuildEdition.LiveTradingSupported;
+
+    /// <summary>MainWindowViewModel 이 모드 전환 시 호출 — IsLiveMode 갱신 + 잔고 재조회 (실거래/모의거래 모두).</summary>
     public void NotifyModeChanged(bool isLive)
     {
         IsLiveMode = isLive;
-        if (isLive)
-            _ = FetchBalanceAsync();
+        _ = FetchBalanceAsync();
     }
 
     public IBrush StatusBrush => IsRunning ? Brushes.LightGreen : Brushes.Gray;
@@ -915,6 +984,7 @@ public class SymbolTabViewModel : ReactiveObject
         {
             this.RaiseAndSetIfChanged(ref _totalAmount, value);
             this.RaisePropertyChanged(nameof(TotalAmountText));
+            this.RaisePropertyChanged(nameof(FundingFeeEstText));
         }
     }
 
@@ -944,6 +1014,12 @@ public class SymbolTabViewModel : ReactiveObject
 
     public string NextMartinPriceText => NextMartinPrice > 0 ? Px(NextMartinPrice) : "-";
 
+    public IReadOnlyList<OKXTradingBot.UI.Views.ChartPriceLine> ChartPriceLines
+    {
+        get => _chartPriceLines;
+        private set => this.RaiseAndSetIfChanged(ref _chartPriceLines, value);
+    }
+
     public decimal UnrealizedPnlPct
     {
         get => _unrealizedPnlPct;
@@ -956,6 +1032,52 @@ public class SymbolTabViewModel : ReactiveObject
     }
 
     public string UnrealizedPnlText => UnrealizedPnlPct != 0 ? $"{UnrealizedPnlPct:+0.00;-0.00}%" : "-";
+
+    // ── 펀딩비율 ─────────────────────────────────────────────────────────
+    private decimal _fundingRate    = 0m;
+    private string  _fundingNext    = "--";
+    private bool    _positionIsOpen = false;
+    private bool    _positionIsLong = false;
+
+    public bool   FundingRateVisible => true;
+
+    public string FundingRateText
+    {
+        get
+        {
+            if (_fundingRate == 0) return "--";
+            var pct = $"{Math.Abs(_fundingRate * 100):0.0000}%";
+            if (!_positionIsOpen)
+                return pct;
+            var isReceive = _positionIsLong ? _fundingRate < 0 : _fundingRate > 0;
+            return isReceive ? $"{pct}  (수취)" : $"{pct}  (지급)";
+        }
+    }
+
+    public IBrush FundingRateBrush
+    {
+        get
+        {
+            if (_fundingRate == 0 || !_positionIsOpen) return Brushes.Gray;
+            var isReceive = _positionIsLong ? _fundingRate < 0 : _fundingRate > 0;
+            return isReceive ? Brushes.LightGreen : Brushes.Tomato;
+        }
+    }
+
+    public string FundingNextText => _fundingNext;
+
+    public string FundingFeeEstText
+    {
+        get
+        {
+            if (_fundingRate == 0 || !_positionIsOpen || _totalAmount <= 0) return "";
+            var fee = _totalAmount * Math.Abs(_fundingRate);
+            var isReceive = _positionIsLong ? _fundingRate < 0 : _fundingRate > 0;
+            var sign = isReceive ? "+" : "-";
+            var krw  = _usdKrwRate > 0 ? $" (≈₩{fee * _usdKrwRate:N0})" : "";
+            return $"예상 펀딩비: {sign}{fee:F4} USDT{krw}";
+        }
+    }
 
     public IBrush PnlBrush
     {
@@ -1070,30 +1192,40 @@ public class SymbolTabViewModel : ReactiveObject
         Action<string> logSink = msg => _logService?.Write(msg);
 
         // ── 데이터 프로바이더 (실시간 — 가상매매/실거래 공통) ──
-        var rest      = new OkxRestClient(config.ApiKey, config.ApiSecret, config.Passphrase,
-                            new FileLogger<OkxRestClient>(logSink));
-        var ws        = new OkxWebSocketClient(new FileLogger<OkxWebSocketClient>(logSink));
+#if LIVE_TRADING
+        bool simulated  = global.IsBacktestMode;
+        var  apiKey     = simulated ? global.DemoApiKey     : config.ApiKey;
+        var  apiSecret  = simulated ? global.DemoApiSecret  : config.ApiSecret;
+        var  passphrase = simulated ? global.DemoPassphrase : config.Passphrase;
+#else
+        bool simulated  = true;
+        var  apiKey     = global.DemoApiKey;
+        var  apiSecret  = global.DemoApiSecret;
+        var  passphrase = global.DemoPassphrase;
+#endif
+
+        var rest      = new OkxRestClient(apiKey, apiSecret, passphrase,
+                            new FileLogger<OkxRestClient>(logSink), simulated,
+                            string.IsNullOrEmpty(global.ProxyUrl) ? null : global.ProxyUrl);
+        var ws        = new OkxWebSocketClient(new FileLogger<OkxWebSocketClient>(logSink), simulated);
         _dataProvider = new OkxDataProvider(ws, rest, config.Symbol);
 
-        // ── 주문 실행기: 가상매매 vs 실거래 (이것만 교체하면 끝) ──
-        IOrderExecutor executor;
+        var privWs = new OkxPrivateWebSocketClient(
+            apiKey, apiSecret, passphrase,
+            new FileLogger<OkxPrivateWebSocketClient>(logSink), simulated);
+        var realExecutor = new OkxOrderExecutor(rest, privWs,
+            new FileLogger<OkxOrderExecutor>(logSink));
+        realExecutor.SetSymbolForPrivateStream(config.Symbol);
+        IOrderExecutor executor = realExecutor;
+
+#if LIVE_TRADING
         if (global.IsBacktestMode)
-        {
-            executor = new VirtualOrderExecutor(_dataProvider, config.TotalBudget, _accountBalance);
-            AddLog($"[가상매매] 가상 잔고 {config.TotalBudget:N2} USDT | 계좌잔고 {_accountBalance:N2} USDT ({config.MarginModeStr} 마진 시뮬레이션)");
-        }
+            AddLog($"[모의거래] OKX 모의계좌 (x-simulated-trading) + Pre-orders 모드");
         else
-        {
-            // 실거래: Private WS 포함 OkxOrderExecutor — 체결 감지/주문 로그를 파일에 남긴다.
-            var privWs = new OkxPrivateWebSocketClient(
-                config.ApiKey, config.ApiSecret, config.Passphrase,
-                new FileLogger<OkxPrivateWebSocketClient>(logSink));
-            var realExecutor = new OkxOrderExecutor(rest, privWs,
-                new FileLogger<OkxOrderExecutor>(logSink));
-            realExecutor.SetSymbolForPrivateStream(config.Symbol);
-            executor = realExecutor;
             AddLog($"[실거래] OKX 실주문 + Pre-orders 모드 (서버 트리거)");
-        }
+#else
+        AddLog($"[모의거래] OKX 모의계좌 (x-simulated-trading) + Pre-orders 모드");
+#endif
 
         // ── 텔레그램 알림기 (_notifyConfig 참조 공유 — 설정 변경 시 실시간 반영) ──
         var notifier = new TelegramNotifier(config.TelegramBotToken, config.TelegramChatId, _notifyConfig);
@@ -1138,7 +1270,8 @@ public class SymbolTabViewModel : ReactiveObject
             _cts?.Cancel();
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
-                IsRunning = false;
+                IsRunning  = false;
+                IsStopping = false;
                 StopPricePolling();
                 _logService?.WriteSeparator("매매 종료");
             });
@@ -1161,6 +1294,38 @@ public class SymbolTabViewModel : ReactiveObject
 
     private static readonly HttpClient _httpClient = new();
 
+    private async Task FetchFundingRateAsync()
+    {
+        try
+        {
+            var url  = $"https://www.okx.com/api/v5/public/funding-rate?instId={_symbol}";
+            var json = await _httpClient.GetStringAsync(url);
+            var doc  = System.Text.Json.JsonDocument.Parse(json);
+            var data = doc.RootElement.GetProperty("data")[0];
+
+            if (data.TryGetProperty("fundingRate", out var fr) &&
+                decimal.TryParse(fr.GetString(), out var rate))
+            {
+                _fundingRate = rate;
+                this.RaisePropertyChanged(nameof(FundingRateText));
+                this.RaisePropertyChanged(nameof(FundingRateBrush));
+                this.RaisePropertyChanged(nameof(FundingFeeEstText));
+            }
+
+            if (data.TryGetProperty("nextFundingTime", out var nft) &&
+                long.TryParse(nft.GetString(), out var ms))
+            {
+                var kst = TimeZoneInfo.FindSystemTimeZoneById(
+                    OperatingSystem.IsWindows() ? "Korea Standard Time" : "Asia/Seoul");
+                var next = TimeZoneInfo.ConvertTimeFromUtc(
+                    DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime, kst);
+                _fundingNext = next.ToString("HH:mm");
+                this.RaisePropertyChanged(nameof(FundingNextText));
+            }
+        }
+        catch { }
+    }
+
     private async Task FetchExchangeRateAsync()
     {
         try
@@ -1175,17 +1340,24 @@ public class SymbolTabViewModel : ReactiveObject
 
     private async Task FetchBalanceAsync()
     {
-        var global = _getGlobalConfig();
-        if (string.IsNullOrEmpty(global.ApiKey))
+        var global     = _getGlobalConfig();
+        bool simulated = global.IsBacktestMode;
+        var  apiKey    = simulated ? global.DemoApiKey    : global.ApiKey;
+        var  apiSecret = simulated ? global.DemoApiSecret : global.ApiSecret;
+        var  passphrase= simulated ? global.DemoPassphrase: global.Passphrase;
+
+        if (string.IsNullOrEmpty(apiKey))
         {
-            AddLog("⚠ 잔고 조회 실패 — 설정 > API Key를 먼저 입력·저장하세요");
+            var keyName = simulated ? "설정 > 데모 API Key" : "설정 > API Key";
+            AddLog($"⚠ 잔고 조회 실패 — {keyName}를 먼저 입력·저장하세요");
             return;
         }
 
         try
         {
-            var rest = new OkxRestClient(global.ApiKey, global.ApiSecret, global.Passphrase,
-                           NullLogger<OkxRestClient>.Instance);
+            var rest    = new OkxRestClient(apiKey, apiSecret, passphrase,
+                              NullLogger<OkxRestClient>.Instance, simulated,
+                              string.IsNullOrEmpty(global.ProxyUrl) ? null : global.ProxyUrl);
             var balance = await rest.GetBalanceAsync();
             AccountBalance = balance;
             AddLog($"[잔고 조회] {balance:N4} USDT  ≈ {AccountBalanceKrwText}");
@@ -1202,6 +1374,7 @@ public class SymbolTabViewModel : ReactiveObject
 
         // 현재 사이클 완료 후 자연 종료 — IsRunning은 HandleTradeClosed에서 처리
         if (_core != null) await _core.StopAsync();
+        IsStopping = true;
     }
 
     /// <summary>라이센스 만료 시 외부에서 호출 — 신규 진입 차단, 현재 포지션 유지.</summary>
@@ -1247,11 +1420,12 @@ public class SymbolTabViewModel : ReactiveObject
     public async Task RestartChartWebSocketAsync()
     {
         _chartWsCts?.Cancel();
-        if (_chartWs != null)
+        var oldWs = _chartWs;
+        _chartWs = null;
+        if (oldWs != null)
         {
-            try { await _chartWs.StopAsync(); } catch { }
-            await _chartWs.DisposeAsync();
-            _chartWs = null;
+            try { await oldWs.StopAsync(); } catch { }
+            try { await oldWs.DisposeAsync(); } catch { }
         }
 
         await RefreshChartAsync();
@@ -1341,6 +1515,10 @@ public class SymbolTabViewModel : ReactiveObject
 
             if (pos.Status == PositionStatus.Open)
             {
+                _positionIsOpen = true;
+                _positionIsLong = pos.Direction == TradeDirection.Long;
+                this.RaisePropertyChanged(nameof(FundingRateText));
+                this.RaisePropertyChanged(nameof(FundingRateBrush));
                 DirectionText    = pos.Direction == TradeDirection.Long ? "LONG  ▲" : "SHORT  ▼";
                 DirectionBrush   = pos.Direction == TradeDirection.Long ? Brushes.LightGreen : Brushes.Tomato;
                 MartinStep       = pos.MartinStep;
@@ -1348,9 +1526,13 @@ public class SymbolTabViewModel : ReactiveObject
                 AvgEntryPrice    = pos.AvgEntryPrice;
                 NextMartinPrice  = pos.GetNextMartinTriggerPrice(GetMartinGapForStep(pos.MartinStep + 1));
                 UnrealizedPnlPct = pos.CurrentPnlPercent;
+                ChartPriceLines  = BuildChartPriceLines(pos);
             }
             else if (pos.Status == PositionStatus.Closed)
             {
+                _positionIsOpen = false;
+                this.RaisePropertyChanged(nameof(FundingRateText));
+                this.RaisePropertyChanged(nameof(FundingRateBrush));
                 // UI 상태 초기화 (TradeRecord는 HandleTradeClosed에서 처리)
                 DirectionText    = "-";
                 DirectionBrush   = Brushes.Gray;
@@ -1360,6 +1542,7 @@ public class SymbolTabViewModel : ReactiveObject
                 NextMartinPrice  = 0;
                 UnrealizedPnlPct = 0;
                 RealizedPnl      = pos.RealizedPnl;
+                ChartPriceLines  = Array.Empty<OKXTradingBot.UI.Views.ChartPriceLine>();
             }
             else if (pos.Status == PositionStatus.None)
             {
@@ -1372,8 +1555,39 @@ public class SymbolTabViewModel : ReactiveObject
                 NextMartinPrice  = 0;
                 UnrealizedPnlPct = 0;
                 PositionStatusText = "대기 중";
+                ChartPriceLines  = Array.Empty<OKXTradingBot.UI.Views.ChartPriceLine>();
             }
         });
+    }
+
+    private IReadOnlyList<OKXTradingBot.UI.Views.ChartPriceLine> BuildChartPriceLines(Position pos)
+    {
+        var lines = new List<OKXTradingBot.UI.Views.ChartPriceLine>();
+        bool isLong = pos.Direction == TradeDirection.Long;
+
+        // 평균 진입가 (흰색 실선)
+        if (pos.AvgEntryPrice > 0)
+            lines.Add(new OKXTradingBot.UI.Views.ChartPriceLine(
+                pos.AvgEntryPrice, "AVG",
+                Avalonia.Media.Color.Parse("#FFFFFF"), IsSolid: true));
+
+        // 남은 예비매수 가격 (주황색 점선)
+        if (pos.LastEntryPrice > 0 && pos.MartinStep < _martinCount)
+        {
+            var triggerPrice = pos.LastEntryPrice;
+            for (int step = pos.MartinStep + 1; step <= _martinCount; step++)
+            {
+                var gap = GetMartinGapForStep(step);
+                triggerPrice = isLong
+                    ? triggerPrice * (1 - gap / 100)
+                    : triggerPrice * (1 + gap / 100);
+                lines.Add(new OKXTradingBot.UI.Views.ChartPriceLine(
+                    triggerPrice, $"M{step}",
+                    Avalonia.Media.Color.Parse("#FF9800")));
+            }
+        }
+
+        return lines;
     }
 
     /// <summary>거래(사이클) 완료 이벤트 핸들러 — TradeRecord 생성 + 통계 + DB 저장</summary>
@@ -1404,7 +1618,9 @@ public class SymbolTabViewModel : ReactiveObject
                 UsdKrwRate    = _usdKrwRate,
                 OpenedAt      = e.OpenedAt,
                 ClosedAt      = e.ClosedAt,
-                AmountMode    = _amountMode.ToString()
+                AmountMode    = _amountMode.ToString(),
+                BalanceBefore = e.BalanceBefore,
+                BalanceAfter  = e.BalanceAfter
             };
 
             TradeHistory.Insert(0, record);
@@ -1449,7 +1665,10 @@ public class SymbolTabViewModel : ReactiveObject
                         Fee           = e.Fee,
                         UsdKrwRate    = _usdKrwRate,
                         OpenedAt      = e.OpenedAt,
-                        ClosedAt      = e.ClosedAt
+                        ClosedAt      = e.ClosedAt,
+                        AmountMode    = e.AmountMode,
+                        BalanceBefore = e.BalanceBefore,
+                        BalanceAfter  = e.BalanceAfter
                     };
                     TradeHistory.Add(record);
                     totalPnl += e.PnlAmount;
@@ -1525,6 +1744,7 @@ public class SymbolTabViewModel : ReactiveObject
         StopLossPercent    = _stopLossPercent,
         BudgetPercent      = _budgetPercent,
         AutoRepeat         = _autoRepeat,
+        ReinvestProfit     = _reinvestProfit,
     };
 
     public void ApplySettings(SymbolTabSettings s)
@@ -1536,15 +1756,22 @@ public class SymbolTabViewModel : ReactiveObject
         _marginMode        = s.MarginMode;
         _martinCount       = s.MartinCount;
         _martinGap         = s.MartinGap;
-        _targetProfit      = s.TargetProfit;
+        // 마이그레이션: 구버전은 레버리지 포함 % 저장 → 1.0 초과면 leverage로 나눠서 변환
+        _targetProfit      = s.TargetProfit > 1.0m && s.Leverage > 0
+            ? s.TargetProfit / s.Leverage
+            : s.TargetProfit;
         _martinGapSteps    = new List<decimal>(s.MartinGapSteps);
         _targetProfitSteps = new List<decimal>(s.TargetProfitSteps);
         _martinAmountWeights = new List<decimal>(s.MartinAmountWeights);
         _amountMode        = Enum.TryParse<MartinAmountMode>(s.AmountMode, out var am) ? am : MartinAmountMode.Equal;
         _stopLossEnabled   = s.StopLossEnabled;
-        _stopLossPercent   = s.StopLossPercent;
+        // 마이그레이션: 구버전은 레버리지 포함 % 저장 → 3.0 초과면 leverage로 나눠서 변환
+        _stopLossPercent   = s.StopLossPercent > 3.0m && s.Leverage > 0
+            ? s.StopLossPercent / s.Leverage
+            : s.StopLossPercent;
         _budgetPercent     = s.BudgetPercent;
         _autoRepeat        = s.AutoRepeat;
+        _reinvestProfit    = s.ReinvestProfit;
         _isLoading = false;
 
         // UI 갱신
@@ -1572,6 +1799,7 @@ public class SymbolTabViewModel : ReactiveObject
         this.RaisePropertyChanged(nameof(IsBudgetPercentMode));
         this.RaisePropertyChanged(nameof(IsNotBudgetPercentMode));
         this.RaisePropertyChanged(nameof(AutoRepeat));
+        this.RaisePropertyChanged(nameof(ReinvestProfit));
         this.RaisePropertyChanged(nameof(SingleOrderAmountText));
         this.RaisePropertyChanged(nameof(SingleOrderAmountValueText));
         this.RaisePropertyChanged(nameof(RequiredSeedText));
@@ -1662,14 +1890,19 @@ public class SymbolTabViewModel : ReactiveObject
         MarginMode             = Enum.Parse<OKXTradingBot.Core.Models.MarginMode>(_marginMode),
         MartinCount            = _martinCount,
         MartinGap              = _martinGap,
-        TargetProfit           = _targetProfit,
+        TargetProfit           = _targetProfit * _leverage,
         MartinGapSteps         = new List<decimal>(_martinGapSteps),
-        TargetProfitSteps      = new List<decimal>(_targetProfitSteps),
+        TargetProfitSteps      = _targetProfitSteps.Select(t => t * _leverage).ToList(),
         MartinAmountWeights    = new List<decimal>(_martinAmountWeights),
         AmountMode             = _amountMode,
         StopLossEnabled        = _stopLossEnabled,
         StopLossPercent        = _stopLossPercent,
+        ReinvestProfit         = _reinvestProfit,
         TelegramBotToken       = global.TelegramBotToken,
         TelegramChatId         = global.TelegramChatId,
+        UsdKrwRate             = _usdKrwRate,
+        TradeRestrictEnabled   = global.TradeRestrictEnabled,
+        TradeRestrictStart     = global.TradeRestrictStart,
+        TradeRestrictEnd       = global.TradeRestrictEnd,
     };
 }

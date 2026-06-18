@@ -60,7 +60,8 @@
           </Grid>
           <local:PriceChartControl Grid.Row="1"
                                    Candles="{Binding RecentCandles}"
-                                   ChartType="{Binding SelectedChartType}"/>
+                                   ChartType="{Binding SelectedChartType}"
+                                   PriceLines="{Binding ChartPriceLines}"/>
         </Grid>
       </Border>
 
@@ -136,17 +137,21 @@
                          FontSize="11" Foreground="#FF9800"
                          TextWrapping="Wrap"
                          IsVisible="{Binding HasSymbolDuplicateWarning}"/>
-              <!-- 레버리지 + 자동반복 -->
-              <Grid ColumnDefinitions="Auto,*,Auto">
-                <TextBlock Text="레버리지" MinWidth="75" FontSize="11"
+              <!-- 레버리지 + 자동반복 + 재투자 -->
+              <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" >
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="레버리지" MinWidth="75" FontSize="11"
                            Foreground="{DynamicResource TextSecondary}"
                            VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <local:NoWheelNumericUpDown Grid.Column="1" Value="{Binding Leverage}"
+                <local:NoWheelNumericUpDown Grid.Row="0" Grid.Column="1" Value="{Binding Leverage}"
                                Minimum="1" Maximum="125" Increment="1"
                                FormatString="F0" FontSize="12"/>
-                <CheckBox Grid.Column="2" IsChecked="{Binding AutoRepeat}"
+                <CheckBox Grid.Row="0" Grid.Column="2" IsChecked="{Binding AutoRepeat}"
                           Content="자동반복" FontSize="11"
                           Margin="8,0,0,0" VerticalAlignment="Center"
+                          Foreground="{DynamicResource TextSecondary}"/>
+                <CheckBox Grid.Row="1" Grid.Column="2" IsChecked="{Binding ReinvestProfit}"
+                          Content="재투자" FontSize="11"
+                          Margin="8,2,0,0" VerticalAlignment="Center"
                           Foreground="{DynamicResource TextSecondary}"/>
               </Grid>
               <!-- 마진 모드 -->
@@ -231,7 +236,7 @@
                            Foreground="{DynamicResource TextSecondary}"
                            VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <StackPanel Grid.Column="1" Spacing="1">
-                  <!-- 실거래: 읽기 전용(API 조회값) / 모의거래: 직접 입력 가능(시뮬레이션 시드) -->
+                  <!-- 실거래: 읽기 전용(API 조회값) / 모의거래: 직접 입력 가능 -->
                   <local:NoWheelNumericUpDown Value="{Binding AccountBalance}"
                                  Minimum="0" Maximum="100000000" Increment="100"
                                  FormatString="F0" FontSize="12"
@@ -242,15 +247,14 @@
                              Opacity="0.8" HorizontalAlignment="Right"
                              IsVisible="{Binding AccountBalanceKrwText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
                 </StackPanel>
-                <!-- 실거래 모드에서만 새로고침 버튼 표시 -->
+                <!-- 실거래: 실계좌 조회 / 모의거래: 데모계좌 조회 — 항상 표시 -->
                 <Button Grid.Column="3"
                         Content="↻"
                         Command="{Binding FetchBalanceCommand}"
-                        ToolTip.Tip="실거래 계좌잔고 조회"
+                        ToolTip.Tip="계좌잔고 조회"
                         Padding="8,4" CornerRadius="4" FontSize="13"
                         Background="{DynamicResource CardBorder}"
-                        Foreground="{DynamicResource TextSecondary}"
-                        IsVisible="{Binding IsLiveMode}"/>
+                        Foreground="{DynamicResource TextSecondary}"/>
               </Grid>
             </StackPanel>
           </Border>
@@ -272,6 +276,10 @@
                                Minimum="1" Maximum="20" Increment="1"
                                FormatString="F0" FontSize="13" FontWeight="Bold"/>
               </Grid>
+              <TextBlock Text="{Binding TotalPriceMoveText}"
+                         FontSize="10" Foreground="{DynamicResource TextSecondary}"
+                         Margin="0,-2,0,0"
+                         IsVisible="{Binding TotalPriceMoveText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
               <Grid ColumnDefinitions="Auto,*" IsEnabled="{Binding IsUniformMode}">
                 <TextBlock Text="진입 간격 (%)" MinWidth="90" FontSize="11"
                            Foreground="{DynamicResource TextSecondary}"
@@ -285,13 +293,9 @@
                            Foreground="{DynamicResource TextSecondary}"
                            VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <local:NoWheelNumericUpDown Grid.Column="1" Value="{Binding TargetProfit}"
-                               Minimum="0.1" Maximum="10" Increment="0.1"
-                               FormatString="F1" FontSize="13" FontWeight="Bold"/>
+                               Minimum="0.01" Maximum="5" Increment="0.01"
+                               FormatString="F2" FontSize="13" FontWeight="Bold"/>
               </Grid>
-              <TextBlock Text="{Binding ActualPriceMoveText}"
-                         FontSize="10" Foreground="{DynamicResource TextSecondary}"
-                         Margin="0,-2,0,0"
-                         IsVisible="{Binding ActualPriceMoveText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
               <!-- 모드 인디케이터 + 단계별 설정 버튼 -->
               <Grid ColumnDefinitions="*,6,Auto">
@@ -374,7 +378,7 @@
                           Foreground="{DynamicResource TextPrimary}"/>
                 <local:NoWheelNumericUpDown Grid.Column="1" Value="{Binding StopLossPercent}"
                                IsEnabled="{Binding StopLossEnabled}"
-                               Minimum="0.1" Maximum="50" Increment="0.5"
+                               Minimum="0.1" Maximum="25" Increment="0.1"
                                FormatString="F1" FontSize="12"/>
               </Grid>
             </StackPanel>
@@ -429,6 +433,26 @@
                              Foreground="{Binding PnlBrush}" Margin="0,2,0,0"/>
                 </StackPanel>
               </Grid>
+              <Rectangle Height="1" Fill="{DynamicResource SeparatorColor}"
+                         IsVisible="{Binding FundingRateVisible}"/>
+              <Grid ColumnDefinitions="*,*" IsVisible="{Binding FundingRateVisible}">
+                <StackPanel Grid.Column="0">
+                  <TextBlock Text="펀딩비율 (8h)" FontSize="10" Foreground="{DynamicResource TextSecondary}"/>
+                  <TextBlock Text="{Binding FundingRateText}"
+                             FontSize="12" FontWeight="Bold"
+                             Foreground="{Binding FundingRateBrush}" Margin="0,2,0,0"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1">
+                  <TextBlock Text="다음 정산" FontSize="10" Foreground="{DynamicResource TextSecondary}"/>
+                  <TextBlock Text="{Binding FundingNextText}"
+                             FontSize="12" Foreground="{DynamicResource TextSecondary}" Margin="0,2,0,0"/>
+                </StackPanel>
+              </Grid>
+              <TextBlock Text="{Binding FundingFeeEstText}"
+                         FontSize="11" FontWeight="Bold"
+                         Foreground="{Binding FundingRateBrush}"
+                         IsVisible="{Binding FundingFeeEstText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                         Margin="0,-2,0,0"/>
             </StackPanel>
           </Border>
 
@@ -489,7 +513,7 @@
                       HorizontalAlignment="Stretch"
                       HorizontalContentAlignment="Center"/>
               <Button Grid.Column="2"
-                      Content="■  중지"
+                      Content="{Binding StopButtonText}"
                       Command="{Binding StopCommand}"
                       Background="{DynamicResource StopBg}"
                       Foreground="{DynamicResource StopFg}"
