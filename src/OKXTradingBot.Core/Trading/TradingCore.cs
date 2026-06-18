@@ -348,6 +348,8 @@ public class TradingCore
         if (_position == null || _position.Status != PositionStatus.Open)
         {
             Log($"⏹ 중지 — 열린 포지션 없음, 즉시 종료 | 완료 사이클: {_cycleCount}회 | 세션 손익: {_sessionPnl:+0.0000;-0.0000;0.0000} USDT");
+            _running = false;
+            OnBotStopped?.Invoke(this, EventArgs.Empty);
             return Task.CompletedTask;
         }
 
@@ -580,6 +582,10 @@ public class TradingCore
                     // 자동반복 모드에서 청산 후 자동 리셋은 ClosePositionAsync에서 처리
                     break;
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // 중지 요청으로 인한 취소 — 정상 흐름
         }
         catch (Exception ex)
         {
