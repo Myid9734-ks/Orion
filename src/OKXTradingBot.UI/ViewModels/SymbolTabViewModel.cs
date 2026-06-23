@@ -1174,6 +1174,7 @@ public class SymbolTabViewModel : ReactiveObject
             AddLog($"⚠ {adjustWarning}");
             config.MartinCount = effectiveCount;
             config.TotalBudget = effectiveBudget;
+            MartinCount = effectiveCount;
             if (config.MartinAmountWeights.Count > effectiveCount)
                 config.MartinAmountWeights = config.MartinAmountWeights.Take(effectiveCount).ToList();
             if (config.MartinGapSteps.Count > effectiveCount)
